@@ -1,3 +1,18 @@
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package coders
 
 import (
@@ -9,6 +24,10 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
+// Encoder encapsulates building a []byte from some other type, based on the
+// Apache Beam standard Coders.
+//
+// When the value is fully encode, retrive the completed []byte with [*Encoder.Data].
 type Encoder struct {
 	data  []byte    // Contains the serialized arguments.
 	space [100]byte // Prellocated buffer to avoid allocations for small size arguments.
@@ -22,6 +41,8 @@ func NewEncoder() *Encoder {
 
 // Reset resets the Encoder to use a buffer with a capacity of at least the
 // provided size. All encoded data is lost.
+//
+// Reset may re-use the existing byte buffer.
 func (e *Encoder) Reset(n int) {
 	if n <= cap(e.data) {
 		e.data = e.data[:0]

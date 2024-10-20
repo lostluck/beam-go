@@ -1,3 +1,18 @@
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package harness
 
 import (
@@ -9,9 +24,9 @@ import (
 	"time"
 
 	"github.com/jba/slog/withsupport"
-	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 )
 
 // Produces a logger that has a handler attached to the Beam Logging Service.
@@ -54,9 +69,9 @@ type handlerOptions struct {
 	// Level reports the minimum level to log.
 	// Levels with lower levels are discarded.
 	// If nil, the Handler uses [slog.LevelInfo].
-	Level       slog.Leveler
+	Level slog.Leveler
 	// TODO make this like the slog.Leveler so we can change it in re-used bundle plans.
-	InstID      instructionID 
+	InstID      instructionID
 	TransformId string // edge id.
 }
 

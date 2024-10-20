@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// wordcount is an example pipeline that demonstrates basics of Apache Beam.
 package main
 
 import (
@@ -22,9 +23,9 @@ import (
 	"regexp"
 	"strings"
 
+	"golang.org/x/exp/constraints"
 	"lostluck.dev/beam-go"
 	"lostluck.dev/beam-go/io/textio"
-	"golang.org/x/exp/constraints"
 
 	_ "gocloud.dev/blob/fileblob"
 	_ "gocloud.dev/blob/gcsblob"
