@@ -17,11 +17,11 @@ package beam
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"sync"
 
 	"lostluck.dev/beam-go/coders"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
-	"pgregory.net/rand"
 )
 
 // dofns.go is about the different mix-ins and addons that can be added.
@@ -102,7 +102,7 @@ func (emt *PCol[E]) Emit(ec ElmC, elm E) {
 			if emt.mets.nextSampleIdx < 4 {
 				emt.mets.nextSampleIdx++
 			} else {
-				emt.mets.nextSampleIdx = cur + rand.Int63n(cur/10+2) + 1
+				emt.mets.nextSampleIdx = cur + rand.Int64N(cur/10+2) + 1
 			}
 			enc := coders.NewEncoder()
 			// TODO, optimize this with a sizer instead?
