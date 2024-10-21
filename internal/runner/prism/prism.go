@@ -138,6 +138,7 @@ func unzipCachedFile(zipfile, outputDir string) (string, error) {
 
 type Options struct {
 	Location string // if specified, indicates where a prism binary or zip of the binary can be found.
+	Port     string // if specified, provdies the connection port Prism should use. Otherwise uses the default port a random port.
 }
 
 // Start downloads and begins a prism process.
@@ -171,8 +172,15 @@ func Start(ctx context.Context, opts Options) (func(), error) {
 		// If it's a format error, assume it's an executable.
 		bin = localPath
 	}
+	args := []string{
+		"--idle_shutdown_timeout=10s",
+		"--serve_http=false",
+	}
+	if opts.Port != "" {
+		args = append(args, "--job_port="+opts.Port)
+	}
 
-	cmd := exec.Command(bin, "--idle_shutdown_timeout=10s")
+	cmd := exec.Command(bin, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
