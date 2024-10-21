@@ -13,18 +13,49 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package beam is an experimental version of an Apache Beam Go SDK API that
-// leverages generics, and a more opinionated construction method. It exists
-// to explore the ergonomics and feasibility of such an approach.
+// Package beam is a version of an Apache Beam SDK for Go that
+// leverages generics. It's currently aimed at exploring the approach for
+// the purposes of Data processing.
 //
-// Notably, it's using a completely different approach to building and executing
-// the pipeline, in order to allow Go to typecheck the pipeline, instead of
-// reflection heavy SDK side code.
+// # Status: Prototype
 //
-// Things that are different from the original Apache Beam Go SDK.
-// - Coders
-// - DoFns
-// - Pipeline Construction
-// - No registration required.
-// - Re-builds pipelines on worker, along with managing that construction time.
+// This is published to receive feedback and similar on the approach, and
+// design.
+//
+// This package serves three purposes:
+//
+//   - implementating DoFns
+//   - Constructing Pipelines.
+//   - Launching and managing Jobs.
+//
+// # Implementing DoFns
+//
+// DoFns define execution time behavior for the pipeline, processing, and
+// transforming elements.
+//
+// DoFns are primarily intended to be pointers to a struct type that implement
+// the [Transform] generic interface, using the [DFC] type.
+//
+// Further, the [ElmC] type is used withing [Process] functions for Per Element
+// use.
+//
+// TODO(lostluck): Elaborate on how to build a DoFn.
+//
+// # Constructing Pipelines
+//
+// Pipelines are constructed and launched by loading construction functions into
+// a [Configuration], calling [Configuration.Ready] to receive a [Launcher], and
+// then [Launcher.Run] to start pipeline execution. This returns a [Pipeline]
+// handle that can be used to block until the pipeline is complete, or query
+// active pipeline status and metrics.
+//
+// Simple single pipelines can use the [Launch] or [LaunchAndWait] convenience
+//
+// TODO(lostluck): Elaborate on how to build a pipeline.
+//
+// # Running Jobs
+//
+//   - TODO Cover launching a binary
+//   - TODO Cover testing and Metrics
+//   - TODO Cover flags
 package beam

@@ -27,7 +27,21 @@ import (
 	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 )
 
-// DFC is the DoFn Context for simple DoFns.
+// DFC or the DoFn Context is the local registry and router for Beam
+// features used by the DoFn, in conjunction with reflection analysis of the
+// DoFn's fields.
+//
+// The generic type `E` represents the type of elements the DoFn processes.
+//
+// Most ProcessBundle method implementations must call [DFC.Process] with
+// an element processing func ([Process]). To not do so is a fatal error, caught
+// at runtime.
+//
+// Within a ProcessBundle method, the DFC may be passed to other Beam feature
+// fields, such as [OnBundleFinish], [AfterBundle], metrics like [CounterInt64], [DistributionInt64],
+//
+// Advance DoFns may use a [BoundedSDF], which enable sub element work stealing
+// at execution time. Such a DoFn is considered an SplittableDoFn.
 type DFC[E Element] struct {
 	id        nodeIndex
 	transform string

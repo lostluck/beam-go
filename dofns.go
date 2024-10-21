@@ -141,13 +141,26 @@ func (*OnBundleFinish) Do(dfc bundleFinisher, finishBundle func() error) {
 // Below here are Not Yet Implemented field flavours. //
 ////////////////////////////////////////////////////////
 
+// TODO is a marker indicating that a better type should go here at some point
+// but it's not yet implemented.
+type TODO any
+
 // ObserveWindow indicates this DoFn needs to be aware of windows explicitly.
-// Typical use is to embed ObserveWindows as a field.
+// Required to use as a field, but may be embedded for legibility.
+//
+// DoFns that observe windows must process the element for each window individually.
+// If ObserveWindow isn't being used, remove it to possibly improve performance.
 type ObserveWindow struct{}
 
-func (*ObserveWindow) Of(ec ElmC) any { // TODO make this a concrete window type.
+// Of returns the window for this element.
+func (*ObserveWindow) Of(ec ElmC) TODO { // TODO make this a concrete window type.
 	// When windows are observable, only a single window is present.
 	return ec.windows[0]
+}
+
+// PaneOf returns the window for this element.
+func (*ObserveWindow) PaneOf(ec ElmC) TODO { // TODO make this a concrete pane type.
+	return ec.pane
 }
 
 // AfterBundle allows a DoFn to register a function that runs after

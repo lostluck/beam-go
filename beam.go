@@ -61,21 +61,25 @@ func Pair[K, V Element](k K, v V) KV[K, V] {
 	return KV[K, V]{Key: k, Value: v}
 }
 
-// ElmC is the catch all context for the current element.
+// ElmC is the per element context.
 //
 // This includes
-// * Key (state and timers)
-// * Windows
-// * Timestamp
-// * Pane
+//   - Key (for state and timer using functions)
+//   - Windows
+//   - Timestamp
+//   - Pane
 //
-// Provides the downstream emission context, so it actually sends data to the next DoFn.
+// Provides the downstream emission context, so it actually sends data to the
+// next DoFn.
+//
+// Use an [ObserveWindow] feature to extract the Window and Pane.
 type ElmC struct {
 	elmContext
 
 	pcollections []processor
 }
 
+// EventTime returns the element's event time.
 func (e *ElmC) EventTime() time.Time {
 	return e.eventTime
 }
