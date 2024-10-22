@@ -1,0 +1,14 @@
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+        target: auto #default
+        threshold: 5%
+        base: auto
+    patch:
+      default:
+        informational: true
+
+ignore:
+  - "internal/model" # Beam protos are auto generated, and will be partly largely unused by SDK Side.
