@@ -244,7 +244,7 @@ func Start(ctx context.Context, opts Options) (*Handle, error) {
 		cacheMu.Lock()
 		defer cacheMu.Unlock()
 		if err != nil {
-			fmt.Println("command returned: state %v, err %v", state, err)
+			fmt.Printf("command %v returned: state %v, err %v\n", cmd.Args, state, err)
 		}
 		delete(cache, opts)
 	}()
