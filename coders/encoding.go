@@ -17,7 +17,6 @@ package coders
 
 import (
 	"encoding/binary"
-	"fmt"
 	"math"
 	"time"
 
@@ -356,27 +355,6 @@ func (e *Encoder) Rune(arg rune) {
 // Uint64 encodes an arg of type uint64.
 func (e *Encoder) Uint64(arg uint64) {
 	binary.BigEndian.PutUint64(e.Grow(8), arg)
-}
-
-// encoderError is the type of error passed to panic by encoding code that encounters an error.
-type encoderError struct {
-	err error
-}
-
-func (e encoderError) Error() string {
-	if e.err == nil {
-		return "encoder:"
-	}
-	return "encoder: " + e.err.Error()
-}
-
-func (e encoderError) Unwrap() error {
-	return e.err
-}
-
-// makeEncodeError creates and returns an encoder error.
-func makeEncodeError(format string, args ...interface{}) encoderError {
-	return encoderError{fmt.Errorf(format, args...)}
 }
 
 // Int64 encodes an arg of type int64.
