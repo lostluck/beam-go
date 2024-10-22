@@ -217,7 +217,7 @@ func Start(ctx context.Context, opts Options) (*Handle, error) {
 		bin = localPath
 	}
 	args := []string{
-		"--idle_shutdown_timeout=1s",
+		"--idle_shutdown_timeout=5s",
 		"--serve_http=false",
 	}
 	port := opts.Port
