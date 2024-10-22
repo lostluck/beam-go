@@ -24,9 +24,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/pkg/errors"
 	"lostluck.dev/beam-go"
 	"lostluck.dev/beam-go/io/blobio"
-	"github.com/pkg/errors"
 
 	"gocloud.dev/blob"
 )

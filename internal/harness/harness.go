@@ -10,13 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
-	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"github.com/pkg/errors"
 	"golang.org/x/exp/maps"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
+	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 )
 
 type ExecFunc func(context.Context, *Control, DataContext) (*fnpb.ProcessBundleResponse, error)

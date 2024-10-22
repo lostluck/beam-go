@@ -19,8 +19,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"google.golang.org/protobuf/proto"
+	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 )
 
 func TestShallowClonePTransform(t *testing.T) {

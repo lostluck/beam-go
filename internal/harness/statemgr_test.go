@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 	"github.com/pkg/errors"
+	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 )
 
 // fakeStateClient replicates the call and response protocol

@@ -16,9 +16,9 @@
 package pipelinex
 
 import (
-	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
+	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 )
 
 func shallowClonePipeline(p *pipepb.Pipeline) *pipepb.Pipeline {

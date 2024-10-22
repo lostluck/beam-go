@@ -36,13 +36,13 @@
 package fnexecution_v1
 
 import (
-	pipeline_v1 "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	_ "google.golang.org/protobuf/types/descriptorpb"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+	pipeline_v1 "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	reflect "reflect"
 	sync "sync"
 )

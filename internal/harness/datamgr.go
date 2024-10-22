@@ -25,10 +25,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 )
 
 const (

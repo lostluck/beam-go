@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"lostluck.dev/beam-go"
 	"gocloud.dev/blob"
+	"lostluck.dev/beam-go"
 )
 
 // emptyTreatment controls how empty matches of a pattern are treated.

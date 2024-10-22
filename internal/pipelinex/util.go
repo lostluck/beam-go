@@ -18,8 +18,8 @@ package pipelinex
 import (
 	"sort"
 
-	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"google.golang.org/protobuf/proto"
+	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 )
 
 // Bounded returns true iff all PCollections are bounded.

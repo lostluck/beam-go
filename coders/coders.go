@@ -15,8 +15,6 @@
 
 // Package coders is a pair of convenience handles for encoding and decoding
 // values to [][byte].
-//
-// 
 package coders
 
 import (

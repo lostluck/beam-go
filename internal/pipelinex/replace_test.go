@@ -20,9 +20,9 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
+	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 )
 
 func TestEnsureUniqueName(t *testing.T) {

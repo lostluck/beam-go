@@ -24,11 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/prototext"
+	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 )
 
 type writeTypeEnum int32

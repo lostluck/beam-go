@@ -19,20 +19,20 @@ import (
 	"fmt"
 	"testing"
 
-	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"github.com/google/go-cmp/cmp"
+	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 )
 
 func TestTopologicalSort(t *testing.T) {
 	graphs := map[string]map[string]*pipepb.PTransform{
-		"linkedList": map[string]*pipepb.PTransform{
+		"linkedList": {
 			"p0": ptImpulse("n0"),
 			"p1": ptNoSide("n0", "n1"),
 			"p2": ptNoSide("n1", "n2"),
 			"p3": ptNoSide("n2", "n3"),
 			"p4": ptSink("n3"),
 		},
-		"binarytree": map[string]*pipepb.PTransform{
+		"binarytree": {
 			"p0":   ptImpulse("n0"),
 			"p1a":  ptNoSide("n0", "n1a"),
 			"p1b":  ptNoSide("n0", "n1b"),
@@ -41,7 +41,7 @@ func TestTopologicalSort(t *testing.T) {
 			"p2ba": ptSink("n1b"),
 			"p2bb": ptSink("n1b"),
 		},
-		"binarytreeWComps": map[string]*pipepb.PTransform{
+		"binarytreeWComps": {
 			"p0":   ptImpulse("n0"),
 			"p1a":  ptNoSide("n0", "n1a"),
 			"p1b":  ptNoSide("n0", "n1b"),
@@ -53,7 +53,7 @@ func TestTopologicalSort(t *testing.T) {
 			"c2":   ptComp("p2aa", "p2ab"),
 			"c3":   ptComp("p2ba", "p2bb"),
 		},
-		"linkedListWComps": map[string]*pipepb.PTransform{
+		"linkedListWComps": {
 			"p0": ptImpulse("n0"),
 			"p1": ptNoSide("n0", "n1"),
 			"p2": ptNoSide("n1", "n2"),
@@ -63,7 +63,7 @@ func TestTopologicalSort(t *testing.T) {
 			"c2": ptComp("p1", "p2"),
 			"c3": ptComp("c1", "c2", "p3"),
 		},
-		"leafdag": map[string]*pipepb.PTransform{
+		"leafdag": {
 			"A":  ptImpulse("n0"),
 			"B":  ptNoSide("n0", "n1"),
 			"C":  ptSink("n0", "n1"),
