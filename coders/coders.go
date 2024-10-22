@@ -75,8 +75,14 @@ func makeCoder(rt reflect.Type) any {
 		return varintCoder[uint32]{}
 	case reflect.Uint64:
 		return varintCoder[uint64]{}
+	case reflect.Float32:
+		return floatCoder{}
 	case reflect.Float64:
 		return doubleCoder{}
+	case reflect.Complex64:
+		return complex64Coder{}
+	case reflect.Complex128:
+		return complex128Coder{}
 	case reflect.String:
 		return stringCoder{}
 	case reflect.Slice:
@@ -304,6 +310,16 @@ func (stringCoder) Decode(dec *Decoder) string {
 	return dec.StringUtf8()
 }
 
+type floatCoder struct{}
+
+func (floatCoder) Encode(enc *Encoder, v float32) {
+	enc.Float(v)
+}
+
+func (floatCoder) Decode(dec *Decoder) float32 {
+	return dec.Float()
+}
+
 type doubleCoder struct{}
 
 func (doubleCoder) Encode(enc *Encoder, v float64) {
@@ -312,6 +328,26 @@ func (doubleCoder) Encode(enc *Encoder, v float64) {
 
 func (doubleCoder) Decode(dec *Decoder) float64 {
 	return dec.Double()
+}
+
+type complex64Coder struct{}
+
+func (complex64Coder) Encode(enc *Encoder, v complex64) {
+	enc.Complex64(v)
+}
+
+func (complex64Coder) Decode(dec *Decoder) complex64 {
+	return dec.Complex64()
+}
+
+type complex128Coder struct{}
+
+func (complex128Coder) Encode(enc *Encoder, v complex128) {
+	enc.Complex128(v)
+}
+
+func (complex128Coder) Decode(dec *Decoder) complex128 {
+	return dec.Complex128()
 }
 
 type boolCoder struct{}
