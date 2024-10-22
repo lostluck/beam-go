@@ -164,7 +164,7 @@ func (*ObserveWindow) PaneOf(ec ElmC) TODO { // TODO make this a concrete pane t
 }
 
 // AfterBundle allows a DoFn to register a function that runs after
-// the bundle has been durably committed. Emiting elements here will fail.
+// the bundle has been durably committed. Emitting elements here will fail.
 //
 // TODO consider moving this to a simple interface function.
 // Upside, not likely to try to incorrectly emit in the closure.
@@ -279,7 +279,7 @@ type TryClaim[P any] func(func(P) (P, error)) error
 // restriction.
 type ProcessRestriction[E any, R Restriction[P], P any] func(ElmC, E, R, TryClaim[P]) error
 
-// BoundedSDF indicates this DoFn is able to split elements into independantly
+// BoundedSDF indicates this DoFn is able to split elements into independently
 // processessable sub parts, called Restrictions.
 //
 // Due to the handling required, call the BoundedSDF [Process] method, instead

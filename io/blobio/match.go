@@ -183,7 +183,7 @@ func allowEmptyMatch(glob string, treatment emptyTreatment) bool {
 	}
 }
 
-// TODO Implement Continous Matching once . Below is what's copied from the current SDK.
+// TODO Implement Continuous Matching once . Below is what's copied from the current SDK.
 
 // duplicateTreatment controls how duplicate matches are treated.
 // type duplicateTreatment int

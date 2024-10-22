@@ -24,7 +24,7 @@
 //
 // This package serves three purposes:
 //
-//   - implementating DoFns
+//   - implementing DoFns
 //   - Constructing Pipelines.
 //   - Launching and managing Jobs.
 //
@@ -36,7 +36,7 @@
 // DoFns are primarily intended to be pointers to a struct type that implement
 // the [Transform] generic interface, using the [DFC] type.
 //
-// Further, the [ElmC] type is used withing [Process] functions for Per Element
+// Further, the [ElmC] type is used within [Process] functions for Per Element
 // use.
 //
 // TODO(lostluck): Elaborate on how to build a DoFn.

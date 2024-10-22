@@ -406,4 +406,4 @@ type procSizedElmAndRestIface interface {
 	splitElementSource() (prog float64, splitElement elmSplitCallback)
 }
 
-// TODO Truncate Restricton.
+// TODO Truncate Restriction.

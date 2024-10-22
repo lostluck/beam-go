@@ -41,7 +41,7 @@ import (
 	"lostluck.dev/beam-go/internal/runner/universal"
 )
 
-// Element represents any user type. Beam processses arbitary user types, but requires
+// Element represents any user type. Beam processses arbitrary user types, but requires
 // them to be encodeable.
 type Element interface {
 	any // Sadly, can't really restrict this without breaking iterators in GBK results.
@@ -223,7 +223,7 @@ type workerFlags struct {
 // however, that requires registration of DoFns in advance.
 //
 // Serializable Construction time options may be registered with the [TODO]
-// method, and refered to in calls to [Launch] or [Prepare].
+// method, and referred to in calls to [Launch] or [Prepare].
 //
 // You may [Prepare] multiple pipelines in advance, in order to
 // ensure their configuration is registered with an ID.
