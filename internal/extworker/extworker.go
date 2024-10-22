@@ -25,10 +25,10 @@ import (
 	"sync"
 	"time"
 
-	"lostluck.dev/beam-go/internal/harness"
-	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"lostluck.dev/beam-go/internal/harness"
+	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 )
 
 // StartLoopback initializes a Loopback ExternalWorkerService, at the given port.

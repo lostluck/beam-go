@@ -22,7 +22,6 @@ import (
 	"log"
 	"log/slog"
 	"maps"
-	"net"
 	"os"
 	"reflect"
 	"runtime/debug"
@@ -409,16 +408,14 @@ func (l Launcher) Run(ctx context.Context, pid string, opts ...Options) (Pipelin
 	// If we don't have a remote endpoint, start a local prism process.
 	// TODO how to better override default location for development.
 	if l.ef.Endpoint == "" {
-		port := pickPort()
-		_, err := prism.Start(ctx, prism.Options{
+		handle, err := prism.Start(ctx, prism.Options{
 			//	Location: "/home/lostluck/git/beam/sdks/go/cmd/prism/prism",
-			Port: port,
 		})
 		if err != nil {
 			cancelCtxFn(err)
 			return Pipeline{}, err
 		}
-		l.ef.Endpoint = "localhost:" + port
+		l.ef.Endpoint = handle.Addr()
 		// If unset, use loopback mode when using default prism.
 		if l.ef.EnvironmentType == "" {
 			l.ef.EnvironmentType = "LOOPBACK"
@@ -470,16 +467,6 @@ func (l Launcher) Run(ctx context.Context, pid string, opts ...Options) (Pipelin
 		return p, fmt.Errorf("job failed to start: %w", err)
 	}
 	return p, nil
-}
-
-func pickPort() string {
-	lis, err := net.Listen("tcp", ":0")
-	if err != nil {
-		panic(fmt.Errorf("couldn't select random port to listen to: %w", err))
-	}
-	defer lis.Close()
-	_, port, _ := net.SplitHostPort(lis.Addr().String())
-	return port
 }
 
 // FromCommandLine registers this Config to be initialized from the command line flags of the binary.

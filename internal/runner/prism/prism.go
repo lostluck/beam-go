@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,6 +30,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // TODO: Allow configuration of port/ return of auto selected ports.
@@ -141,11 +143,53 @@ type Options struct {
 	Port     string // if specified, provdies the connection port Prism should use. Otherwise uses the default port a random port.
 }
 
+// Handle provides a shared handle into a prism process.
+type Handle struct {
+	addr     string
+	cancelFn func()
+	cmd      *exec.Cmd
+}
+
+// Terminate ends the prism process.
+func (h *Handle) Terminate() {
+	h.cancelFn()
+}
+
+// Addr returns the determined port and host address for the prism process.
+func (h *Handle) Addr() string {
+	return h.addr
+}
+
+func pickPort() string {
+	lis, err := net.Listen("tcp", ":0")
+	if err != nil {
+		panic(fmt.Errorf("couldn't select random port to listen to: %w", err))
+	}
+	defer lis.Close()
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	return port
+}
+
+var (
+	cacheMu sync.Mutex
+	cache   = map[Options]*Handle{}
+)
+
 // Start downloads and begins a prism process.
 //
 // Returns a cancellation function to be called once the process is no
 // longer needed.
-func Start(ctx context.Context, opts Options) (func(), error) {
+func Start(ctx context.Context, opts Options) (*Handle, error) {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	if h, ok := cache[opts]; ok {
+		// Probably not safe, but
+		if h.cmd.ProcessState == nil {
+			return h, nil
+		}
+		delete(cache, opts)
+	}
+
 	localPath := opts.Location
 	if localPath == "" {
 		url := constructDownloadPath(beamVersion, beamVersion)
@@ -173,12 +217,14 @@ func Start(ctx context.Context, opts Options) (func(), error) {
 		bin = localPath
 	}
 	args := []string{
-		"--idle_shutdown_timeout=10s",
+		"--idle_shutdown_timeout=1s",
 		"--serve_http=false",
 	}
-	if opts.Port != "" {
-		args = append(args, "--job_port="+opts.Port)
+	port := opts.Port
+	if port == "" {
+		port = pickPort()
 	}
+	args = append(args, "--job_port="+port)
 
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = os.Stdout
@@ -186,7 +232,20 @@ func Start(ctx context.Context, opts Options) (func(), error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("couldn't start command %q: %w", bin, err)
 	}
-	return func() {
-		cmd.Process.Kill()
-	}, nil
+	handle := &Handle{
+		addr: "localhost:" + port,
+		cancelFn: func() {
+			cmd.Process.Kill()
+		},
+		cmd: cmd,
+	}
+	go func() {
+		err := cmd.Wait()
+		cacheMu.Lock()
+		defer cacheMu.Unlock()
+		fmt.Println("command returned: ", err)
+		delete(cache, opts)
+	}()
+	cache[opts] = handle
+	return handle, nil
 }

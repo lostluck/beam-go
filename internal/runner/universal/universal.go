@@ -65,7 +65,7 @@ func writeWorkerID(ctx context.Context, id string) context.Context {
 }
 
 func Execute(ctx context.Context, p *pipepb.Pipeline, opts beamopts.Struct) (*Pipeline, error) {
-	cc, err := harness.Dial(ctx, opts.Endpoint, 2*time.Minute)
+	cc, err := harness.Dial(ctx, opts.Endpoint, 1*time.Minute)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to job service: %w", err)
 	}
