@@ -152,7 +152,7 @@ func (fn *matchFn) ProcessBundle(dfc *beam.DFC[beam.KV[string, string]]) error {
 			if err != nil {
 				return err
 			}
-			ok, err := filepath.Match(glob.Value, lo.Key)
+			ok, _ := filepath.Match(glob.Value, lo.Key)
 			if !ok {
 				continue
 			}
