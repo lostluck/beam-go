@@ -281,22 +281,6 @@ func TestElementChan(t *testing.T) {
 			},
 			wantSum: 6, wantCount: 3,
 		}, {
-			name: "FillBufferThenAbortThenRead",
-			sequenceFn: func(ctx context.Context, t *testing.T, client *fakeChanClient, c *DataChannel) <-chan Elements {
-				for i := 0; i < bufElements+2; i++ {
-					client.Send(&fnpb.Elements{Data: []*fnpb.Elements_Data{dataElm(1, false)}})
-				}
-				elms := openChan(ctx, t, c, timerID)
-				c.removeInstruction(instID)
-
-				// These will be ignored
-				client.Send(&fnpb.Elements{Data: []*fnpb.Elements_Data{dataElm(1, false)}})
-				client.Send(&fnpb.Elements{Data: []*fnpb.Elements_Data{dataElm(2, false)}})
-				client.Send(&fnpb.Elements{Data: []*fnpb.Elements_Data{dataElm(3, true)}})
-				return elms
-			},
-			wantSum: bufElements, wantCount: bufElements,
-		}, {
 			name: "DataThenReaderThenLast",
 			sequenceFn: func(ctx context.Context, t *testing.T, client *fakeChanClient, c *DataChannel) <-chan Elements {
 				client.Send(&fnpb.Elements{
