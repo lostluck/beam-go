@@ -240,10 +240,12 @@ func Start(ctx context.Context, opts Options) (*Handle, error) {
 		cmd: cmd,
 	}
 	go func() {
-		err := cmd.Wait()
+		state, err := cmd.Process.Wait()
 		cacheMu.Lock()
 		defer cacheMu.Unlock()
-		fmt.Println("command returned: ", err)
+		if err != nil {
+			fmt.Println("command returned: state %v, err %v", state, err)
+		}
 		delete(cache, opts)
 	}()
 	cache[opts] = handle
