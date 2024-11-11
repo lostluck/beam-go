@@ -10,7 +10,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	gocloud.dev v0.40.0
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c
-	golang.org/x/sync v0.8.0
+	golang.org/x/sync v0.9.0
 	google.golang.org/grpc v1.67.1
 	google.golang.org/protobuf v1.35.1
 )
