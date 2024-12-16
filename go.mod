@@ -11,7 +11,7 @@ require (
 	gocloud.dev v0.40.0
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c
 	golang.org/x/sync v0.10.0
-	google.golang.org/grpc v1.68.1
+	google.golang.org/grpc v1.69.0
 	google.golang.org/protobuf v1.35.2
 )
 
@@ -67,5 +67,4 @@ require (
 	google.golang.org/genproto v0.0.0-20241015192408-796eee8c2d53 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20241015192408-796eee8c2d53 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241015192408-796eee8c2d53 // indirect
-	google.golang.org/grpc/stats/opentelemetry v0.0.0-20241018153737-98959d9a4904 // indirect
 )
