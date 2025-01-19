@@ -29,8 +29,8 @@ import (
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 )
 
-func TestRowCoder(t *testing.T) {
-	atomT := func(nullable bool, typ pipepb.AtomicType) *pipepb.FieldType {
+var (
+	atomT = func(nullable bool, typ pipepb.AtomicType) *pipepb.FieldType {
 		return &pipepb.FieldType{
 			Nullable: nullable,
 			TypeInfo: &pipepb.FieldType_AtomicType{
@@ -38,10 +38,10 @@ func TestRowCoder(t *testing.T) {
 			},
 		}
 	}
-	strField := atomT(false, pipepb.AtomicType_STRING)
-	nillableString := atomT(true, pipepb.AtomicType_STRING)
+	strField       = atomT(false, pipepb.AtomicType_STRING)
+	nillableString = atomT(true, pipepb.AtomicType_STRING)
 
-	tests := []struct {
+	suite = []struct {
 		name   string
 		schema *pipepb.Schema
 		data   []byte
@@ -113,13 +113,44 @@ func TestRowCoder(t *testing.T) {
 			},
 		},
 	}
-	for _, test := range tests {
+)
+
+func TestRowCoder(t *testing.T) {
+	for _, test := range suite {
 		t.Run(test.name, func(t *testing.T) {
 			c := ToCoder(test.schema)
 
 			r := coders.Decode(c, test.data)
 			if got, want := coders.Encode(c, r), test.data; !cmp.Equal(got, want) {
 				t.Errorf("round trip decode-encode not equal: want %v, got %v", want, got)
+			}
+		})
+	}
+}
+
+// BenchmarkRoundtrip initial, unoptimized results.
+//
+// goos: linux
+// goarch: amd64
+// pkg: lostluck.dev/beam-go/internal/schema
+// cpu: 12th Gen Intel(R) Core(TM) i7-1260P
+// BenchmarkRoundtrip/empty-16         	  361026	      3438 ns/op	    1704 B/op	      24 allocs/op
+// BenchmarkRoundtrip/oneString-16     	  247592	      5303 ns/op	    2008 B/op	      29 allocs/op
+// BenchmarkRoundtrip/oneNillableString_nil-16         	  316699	      4442 ns/op	    1992 B/op	      28 allocs/op
+// BenchmarkRoundtrip/oneNillableString_val-16         	  176032	      6417 ns/op	    2144 B/op	      32 allocs/op
+// BenchmarkRoundtrip/variousNillableStrings-16        	   99806	     12299 ns/op	    2568 B/op	      41 allocs/op
+// BenchmarkRoundtrip/various-16                       	   48140	     27236 ns/op	    4032 B/op	      53 allocs/op
+func BenchmarkRoundtrip(b *testing.B) {
+	for _, test := range suite {
+		b.Run(test.name, func(b *testing.B) {
+			c := ToCoder(test.schema)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				r := coders.Decode(c, test.data)
+				if got, want := coders.Encode(c, r), test.data; !cmp.Equal(got, want) {
+					b.Errorf("round trip decode-encode not equal: want %v, got %v", want, got)
+				}
 			}
 		})
 	}
