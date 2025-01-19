@@ -28,7 +28,7 @@ import (
 // RowValue represents a dynamic row type that is defined by a Beam Row Schema.
 type RowValue struct {
 	numFields uint64
-	nils      []byte
+	nils      []byte // packed bit fields.
 
 	nameToNum map[string]int
 	fields    []fieldValue
@@ -37,6 +37,12 @@ type RowValue struct {
 // Sets the value for the given field, and updates the nil bit.
 func (v *RowValue) Set(fieldname string, val any) {
 	v.fields[v.nameToNum[fieldname]].Val = val
+	// TODO, set the nils field.
+	// if val == nil {
+	// get field, clearBit
+	// } else {
+	// get field, setBit
+	// }
 }
 
 // Sets the bit at pos in the byte b.
@@ -61,14 +67,285 @@ func ToCoder(schema *pipepb.Schema) coders.Coder[RowValue] {
 	if schema.GetEncodingPositionsSet() {
 		panic("changed encoding positions not yet supported")
 	}
+	rawCoder := buildSchemaCoder(schema)
 	return &RowValueCoder{
-		schema: proto.Clone(schema).(*pipepb.Schema),
+		schema:   proto.Clone(schema).(*pipepb.Schema),
+		rawCoder: rawCoder,
+	}
+}
+
+func buildSchemaCoder(schema *pipepb.Schema) coders.Coder[any] {
+	c := &rowCoder{
+		namesToNums: make(map[string]int),
+	}
+	for i, f := range schema.GetFields() {
+		c.namesToNums[f.GetName()] = i
+		ft := f.GetType()
+		c.nullable = append(c.nullable, ft.GetNullable())
+		c.fields = append(c.fields, buildFieldCoder(ft))
+	}
+	return c
+}
+
+func buildFieldCoder(ft *pipepb.FieldType) coders.Coder[any] {
+	switch ti := ft.GetTypeInfo().(type) {
+	case *pipepb.FieldType_AtomicType:
+		return buildAtomicCoder(ti.AtomicType)
+	case *pipepb.FieldType_ArrayType:
+		return buildArrayCoder(ti.ArrayType.GetElementType())
+	case *pipepb.FieldType_IterableType:
+		return buildArrayCoder(ti.IterableType.GetElementType())
+	case *pipepb.FieldType_MapType:
+		return buildMapCoder(ti.MapType)
+	case *pipepb.FieldType_LogicalType:
+		return buildLogicalCoder(ti.LogicalType)
+	case *pipepb.FieldType_RowType:
+		return buildSchemaCoder(ti.RowType.GetSchema())
+	default:
+		panic(fmt.Sprintf("unimplemented field type: %v", prototext.Format(ft)))
+	}
+}
+
+func buildLogicalCoder(logtype *pipepb.LogicalType) coders.Coder[any] {
+	urn := logtype.GetUrn()
+	switch urn {
+	case "beam:logical_type:millis_instant:v1":
+		// Non-conforming Representation.
+		// Claims to be INT64 which is varint encoded,
+		// but uses a raw big endian encoding for Int64s, like for timestamps.
+		return &int64Coder{}
+	case "beam:logical_type:decimal:v1":
+		// Non-conforming Representation.
+		// It claims "bytes", but is a varint of
+		// the scale, followed by a followed by a bytes coding of the raw big
+		// integer.
+		// It's not a row structure either.
+		return &decimalCoder{}
+
+	default:
+		// Do nothing special, and just use the Representation raw.
+		return buildFieldCoder(logtype.GetRepresentation())
+	}
+}
+
+// decimal is a temporary measure for handling the decimal
+// logical type WRT to parsing them.
+// Improveb logical type handling will be some other time.
+type decimal struct {
+	Scale    int64
+	TwosComp []byte
+}
+
+type decimalCoder struct{}
+
+func (c *decimalCoder) Decode(dec *coders.Decoder) any {
+	scale := int64(dec.Varint())
+	data := dec.Bytes()
+	return decimal{Scale: scale, TwosComp: data}
+}
+
+func (c *decimalCoder) Encode(enc *coders.Encoder, val any) {
+	deci := val.(decimal)
+	enc.Varint(uint64(deci.Scale))
+	enc.Bytes(deci.TwosComp)
+}
+
+func buildArrayCoder(ftype *pipepb.FieldType) coders.Coder[any] {
+	fc := buildFieldCoder(ftype)
+	if ftype.GetNullable() {
+		fc = &nullableCoder{wrap: fc}
+	}
+	return &arrayCoder{field: fc}
+}
+
+func buildMapCoder(maptype *pipepb.MapType) coders.Coder[any] {
+	kc := buildFieldCoder(maptype.GetKeyType())
+	vc := buildFieldCoder(maptype.GetValueType())
+	if maptype.GetValueType().GetNullable() {
+		vc = &nullableCoder{wrap: vc}
+	}
+	return &mapCoder{key: kc, value: vc}
+}
+
+func buildAtomicCoder(atype pipepb.AtomicType) coders.Coder[any] {
+	switch atype {
+	case pipepb.AtomicType_BOOLEAN:
+		return wrapCoder(coders.MakeCoder[bool]())
+	case pipepb.AtomicType_BYTE:
+		return wrapCoder(coders.MakeCoder[byte]())
+	case pipepb.AtomicType_BYTES:
+		return wrapCoder(coders.MakeCoder[[]byte]())
+	case pipepb.AtomicType_DOUBLE:
+		return wrapCoder(coders.MakeCoder[float64]())
+	case pipepb.AtomicType_FLOAT:
+		return wrapCoder(coders.MakeCoder[float32]())
+	case pipepb.AtomicType_INT16:
+		return wrapCoder(coders.MakeCoder[int16]())
+	case pipepb.AtomicType_INT32:
+		return wrapCoder(coders.MakeCoder[int32]())
+	case pipepb.AtomicType_INT64:
+		return wrapCoder(coders.MakeCoder[int64]())
+
+	case pipepb.AtomicType_STRING:
+		return wrapCoder(coders.MakeCoder[string]())
+	default:
+		panic(fmt.Sprintf("unimplemented atomic field type: %v", atype))
+	}
+}
+
+type mapCoder struct {
+	key, value coders.Coder[any]
+}
+
+func (c *mapCoder) Decode(dec *coders.Decoder) any {
+	n := dec.Uint32()
+	m := make(map[any]any, n)
+	for range n {
+		k := c.key.Decode(dec)
+		v := c.value.Decode(dec)
+		m[k] = v
+	}
+	return m
+}
+
+func (c *mapCoder) Encode(enc *coders.Encoder, val any) {
+	m := val.(map[any]any)
+	enc.Int32(int32(len(m)))
+	for k, v := range m {
+		c.key.Encode(enc, k)
+		c.value.Encode(enc, v)
+	}
+}
+
+type arrayCoder struct {
+	field coders.Coder[any]
+}
+
+// Decode implements coders.Coder.
+func (c *arrayCoder) Decode(dec *coders.Decoder) any {
+	n := dec.Uint32()
+	arr := make([]any, 0, n)
+	for range n {
+		arr = append(arr, c.field.Decode(dec))
+	}
+	return arr
+}
+
+// Encode implements coders.Coder.
+func (c *arrayCoder) Encode(enc *coders.Encoder, val any) {
+	arr := val.([]any)
+	enc.Int32(int32(len(arr)))
+	for _, v := range arr {
+		c.field.Encode(enc, v)
+	}
+}
+
+type nullableCoder struct {
+	wrap coders.Coder[any]
+}
+
+// Decode implements coders.Coder.
+func (c *nullableCoder) Decode(dec *coders.Decoder) any {
+	if dec.Byte() == 0x00 {
+		return nil
+	}
+	return c.wrap.Decode(dec)
+}
+
+// Encode implements coders.Coder.
+func (c *nullableCoder) Encode(enc *coders.Encoder, v any) {
+	if v == nil {
+		enc.Byte(0x00)
+		return
+	}
+	enc.Byte(0x01)
+	c.wrap.Encode(enc, v)
+}
+
+// These coders are specific to the way Beam Schema Rows Coders handle things.
+
+type int64Coder struct{}
+
+// Decode implements coders.Coder.
+func (c *int64Coder) Decode(dec *coders.Decoder) any {
+	return dec.Int64()
+}
+
+// Encode implements coders.Coder.
+func (c *int64Coder) Encode(enc *coders.Encoder, v any) {
+	enc.Int64(v.(int64))
+}
+
+func wrapCoder[E any, C coders.Coder[E]](coder C) coders.Coder[any] {
+	return &anyCoderAdapter[E, C]{wrapped: coder}
+}
+
+type anyCoderAdapter[E any, C coders.Coder[E]] struct {
+	wrapped C
+}
+
+// Decode implements coders.Coder.
+func (c *anyCoderAdapter[E, C]) Decode(dec *coders.Decoder) any {
+	return c.wrapped.Decode(dec)
+}
+
+// Encode implements coders.Coder.
+func (c *anyCoderAdapter[E, C]) Encode(enc *coders.Encoder, v any) {
+	c.wrapped.Encode(enc, v.(E))
+}
+
+// rowCoder is a `coders.Coder[any]` that produces a RowValue wrapped in an interface.
+type rowCoder struct {
+	namesToNums map[string]int // precomputed index.
+	fields      []coders.Coder[any]
+	nullable    []bool
+}
+
+var _ coders.Coder[any] = (*rowCoder)(nil)
+
+// Decode implements coders.Coder.
+func (c *rowCoder) Decode(dec *coders.Decoder) any {
+	// Varint for the Number of Row field in this encoded row.
+	nf := dec.Varint()
+	// Varint for the length of the packed bit field for nils.
+	// This is just a normal Byte buffer decoder.
+	nils := dec.Bytes()
+
+	row := RowValue{
+		numFields: nf,
+		nils:      nils,
+		nameToNum: c.namesToNums,
+		fields:    make([]fieldValue, nf),
+	}
+	for i, fc := range c.fields {
+		if c.nullable[i] && isFieldNil(row.nils, i) {
+			continue
+		}
+		row.fields[i].Val = fc.Decode(dec)
+	}
+	return row
+}
+
+// Encode implements coders.Coder.
+func (c *rowCoder) Encode(enc *coders.Encoder, v any) {
+	row := v.(RowValue)
+	// Row header has the number of fields
+	enc.Varint(uint64(len(row.fields)))
+	// Followed by the nil bits.
+	enc.Bytes(row.nils)
+
+	for i, fc := range c.fields {
+		if c.nullable[i] && isFieldNil(row.nils, i) {
+			continue
+		}
+		fc.Encode(enc, row.fields[i].Val)
 	}
 }
 
 // RowValueCoder is a stateless coder for a provided schema to dynamic RowValues.
 type RowValueCoder struct {
-	schema *pipepb.Schema
+	schema   *pipepb.Schema
+	rawCoder coders.Coder[any]
 }
 
 var _ coders.Coder[RowValue] = (*RowValueCoder)(nil)
@@ -85,270 +362,9 @@ func isFieldNil(nils []byte, f int) bool {
 
 // Decode will decode bytes into a RowValue
 func (c *RowValueCoder) Decode(dec *coders.Decoder) RowValue {
-	return *decodeSchema(dec, c.schema)
+	return c.rawCoder.Decode(dec).(RowValue)
 }
 
-func decodeField(dec *coders.Decoder, ft *pipepb.FieldType) any {
-	switch ti := ft.GetTypeInfo().(type) {
-	case *pipepb.FieldType_AtomicType:
-		return decodeAtomic(dec, ti.AtomicType)
-	case *pipepb.FieldType_ArrayType:
-		return decodeArray(dec, ti.ArrayType.GetElementType())
-	case *pipepb.FieldType_IterableType:
-		return decodeArray(dec, ti.IterableType.GetElementType())
-	case *pipepb.FieldType_MapType:
-		return decodeMap(dec, ti.MapType)
-	case *pipepb.FieldType_LogicalType:
-		return decodeLogical(dec, ti.LogicalType)
-	case *pipepb.FieldType_RowType:
-		v := decodeSchema(dec, ti.RowType.GetSchema())
-		return v
-	default:
-		panic(fmt.Sprintf("unimplemented field type: %v", prototext.Format(ft)))
-	}
-}
-
-func decodeSchema(dec *coders.Decoder, schema *pipepb.Schema) *RowValue {
-	// Varint for the Number of Row field in this encoded row.
-	nf := dec.Varint()
-	// Varint for the length of the packed bit field for nils.
-	// This is just a normal Byte buffer decoder.
-	nils := dec.Bytes()
-
-	row := &RowValue{
-		numFields: nf,
-		nils:      nils,
-		nameToNum: make(map[string]int),
-	}
-	for i, f := range schema.GetFields() {
-		row.nameToNum[f.GetName()] = i
-		row.fields = append(row.fields, fieldValue{})
-		ft := f.GetType()
-		if ft.GetNullable() && isFieldNil(nils, i) {
-			continue
-		}
-		v := decodeField(dec, ft)
-		row.fields[i].Val = v
-	}
-	return row
-}
-
-type decimal struct {
-	Scale    int64
-	TwosComp []byte
-}
-
-func decodeLogical(dec *coders.Decoder, logtype *pipepb.LogicalType) any {
-	urn := logtype.GetUrn()
-	switch urn {
-	case "beam:logical_type:millis_instant:v1":
-		// Non-conforming Representation.
-		// Claims to be INT64, but uses a raw big endian encoding.
-		return dec.Int64()
-	case "beam:logical_type:decimal:v1":
-		// Non-conforming Representation.
-		// It claims "bytes", but is a varint of
-		// the scale, followed by a followed by a bytes coding of the raw big
-		// integer.
-		// It's not a row structure either.
-		scale := int64(dec.Varint())
-		data := dec.Bytes()
-		return decimal{Scale: scale, TwosComp: data}
-
-	default:
-		// Do nothing special, and just use the Representation raw.
-		v := decodeField(dec, logtype.GetRepresentation())
-		return v
-	}
-}
-
-func decodeMap(dec *coders.Decoder, maptype *pipepb.MapType) any {
-	// Map Decoding.
-	n := dec.Uint32()
-
-	m := make(map[any]any, n)
-	for range n {
-		k := decodeField(dec, maptype.GetKeyType())
-		vt := maptype.GetValueType()
-		if vt.GetNullable() {
-			if dec.Byte() == 0x00 {
-				m[k] = nil
-				continue
-			}
-		}
-		v := decodeField(dec, vt)
-		m[k] = v
-	}
-	return m
-}
-
-func decodeArray(dec *coders.Decoder, ftype *pipepb.FieldType) any {
-	// Iterable Decoding.
-	n := dec.Uint32()
-	arr := make([]any, 0, n)
-	for range n {
-		if ftype.GetNullable() {
-			if dec.Byte() == 0x00 {
-				arr = append(arr, nil)
-				continue
-			}
-		}
-		arr = append(arr, decodeField(dec, ftype))
-	}
-	return arr
-}
-
-func decodeAtomic(dec *coders.Decoder, atype pipepb.AtomicType) any {
-	switch atype {
-	case pipepb.AtomicType_BOOLEAN:
-		return dec.Bool()
-	case pipepb.AtomicType_BYTE:
-		return dec.Byte()
-	case pipepb.AtomicType_BYTES:
-		return dec.Bytes()
-	case pipepb.AtomicType_DOUBLE:
-		return dec.Double()
-	case pipepb.AtomicType_FLOAT:
-		return dec.Float()
-
-	// Ints are varint encoded
-	case pipepb.AtomicType_INT16:
-		return int16(dec.Varint())
-	case pipepb.AtomicType_INT32:
-		return int32(dec.Varint())
-	case pipepb.AtomicType_INT64:
-		return int64(dec.Varint())
-
-	case pipepb.AtomicType_STRING:
-		return dec.StringUtf8()
-	default:
-		panic(fmt.Sprintf("unimplemented atomic field type: %v", atype))
-	}
-}
-
-// Encode implements coders.Coder.
-func (c *RowValueCoder) Encode(enc *coders.Encoder, row RowValue) {
-	encodeSchema(enc, c.schema, &row)
-}
-
-func encodeSchema(enc *coders.Encoder, schema *pipepb.Schema, row *RowValue) {
-	// Row header has the number of fields
-	enc.Varint(uint64(len(row.fields)))
-	// Followed by the nil bits.
-	enc.Bytes(row.nils)
-	// Followed by the fields in encoding order.
-
-	for i, f := range schema.GetFields() {
-		ft := f.GetType()
-		if ft.GetNullable() && isFieldNil(row.nils, i) {
-			continue
-		}
-		encodeField(enc, ft, row.fields[i].Val)
-	}
-}
-
-func encodeField(enc *coders.Encoder, ft *pipepb.FieldType, val any) {
-	switch ti := ft.GetTypeInfo().(type) {
-	case *pipepb.FieldType_AtomicType:
-		encodeAtomic(enc, ti.AtomicType, val)
-	case *pipepb.FieldType_ArrayType:
-		encodeArray(enc, ti.ArrayType.GetElementType(), val)
-	case *pipepb.FieldType_IterableType:
-		encodeArray(enc, ti.IterableType.GetElementType(), val)
-	case *pipepb.FieldType_MapType:
-		encodeMap(enc, ti.MapType, val)
-	case *pipepb.FieldType_LogicalType:
-		encodeLogical(enc, ti.LogicalType, val)
-	case *pipepb.FieldType_RowType:
-		encodeSchema(enc, ti.RowType.GetSchema(), val.(*RowValue))
-	default:
-		panic(fmt.Sprintf("Encode: unimplemented field type: %v", prototext.Format(ft)))
-	}
-}
-
-func encodeLogical(enc *coders.Encoder, logtype *pipepb.LogicalType, val any) {
-	urn := logtype.GetUrn()
-	switch urn {
-	case "beam:logical_type:millis_instant:v1":
-		// Non-conforming Representation.
-		// Claims to be INT64, but uses a raw big endian encoding for the int64
-		// instead of the schema row VarInt.
-		enc.Int64(val.(int64))
-	case "beam:logical_type:decimal:v1":
-		// Non-conforming Representation.
-		// It claims "bytes", but is a varint of
-		// the scale, followed by a followed by a bytes coding of the raw big
-		// integer.
-		// It's not a row structure either.
-		deci := val.(decimal)
-		enc.Varint(uint64(deci.Scale))
-		enc.Bytes(deci.TwosComp)
-	default:
-		// Do nothing special, and just use the Representation raw.
-		encodeField(enc, logtype.GetRepresentation(), val)
-	}
-}
-
-func encodeMap(enc *coders.Encoder, maptype *pipepb.MapType, val any) {
-	// Map Decoding.
-	m := val.(map[any]any)
-	enc.Int32(int32(len(m)))
-	for k, v := range m {
-		encodeField(enc, maptype.GetKeyType(), k)
-
-		vt := maptype.GetValueType()
-		if vt.GetNullable() {
-			if v == nil {
-				enc.Byte(0x00)
-				continue
-			}
-			enc.Byte(0x01)
-		}
-
-		encodeField(enc, vt, v)
-	}
-}
-
-func encodeArray(enc *coders.Encoder, ftype *pipepb.FieldType, val any) {
-	arr := val.([]any)
-	enc.Int32(int32(len(arr)))
-	for _, v := range arr {
-
-		if ftype.GetNullable() {
-			if v == nil {
-				enc.Byte(0x00)
-				continue
-			}
-			enc.Byte(0x01)
-		}
-		encodeField(enc, ftype, v)
-	}
-}
-
-func encodeAtomic(enc *coders.Encoder, atype pipepb.AtomicType, val any) {
-	switch atype {
-	case pipepb.AtomicType_BOOLEAN:
-		enc.Bool(val.(bool))
-	case pipepb.AtomicType_BYTE:
-		enc.Byte(val.(byte))
-	case pipepb.AtomicType_BYTES:
-		enc.Bytes(val.([]byte))
-	case pipepb.AtomicType_DOUBLE:
-		enc.Double(val.(float64))
-	case pipepb.AtomicType_FLOAT:
-		enc.Float(val.(float32))
-
-	// Ints are Varint encoded.
-	case pipepb.AtomicType_INT16:
-		enc.Varint(uint64(val.(int16)))
-	case pipepb.AtomicType_INT32:
-		enc.Varint(uint64(val.(int32)))
-	case pipepb.AtomicType_INT64:
-		enc.Varint(uint64(val.(int64)))
-
-	case pipepb.AtomicType_STRING:
-		enc.StringUtf8(val.(string))
-	default:
-		panic(fmt.Sprintf("unimplemented atomic field type: %v", atype))
-	}
+func (c *RowValueCoder) Encode(enc *coders.Encoder, val RowValue) {
+	c.rawCoder.Encode(enc, val)
 }
