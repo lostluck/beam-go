@@ -25,6 +25,19 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
+// Decode is a convenience function for decoding data using a coder.
+func Decode[E any](coder Coder[E], data []byte) E {
+	dec := NewDecoder(data)
+	return coder.Decode(dec)
+}
+
+// Encode is a convenience function for encoding a value using a coder.
+func Encode[E any](coder Coder[E], val E) []byte {
+	enc := NewEncoder()
+	coder.Encode(enc, val)
+	return enc.Data()
+}
+
 // Coder represents a coder for a specific type.
 type Coder[E any] interface {
 	Encode(enc *Encoder, v E)
