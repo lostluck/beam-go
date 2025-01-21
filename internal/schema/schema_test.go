@@ -129,6 +129,49 @@ func TestRowCoder(t *testing.T) {
 	}
 }
 
+func TestRowValue(t *testing.T) {
+	test := suite[4]
+	c := ToCoder(test.schema)
+
+	t.Run("nilFields", func(t *testing.T) {
+		row := coders.Decode(c, test.data)
+
+		row.Set("first", nil)
+		row.Set("second", nil)
+		row.Set("third", nil)
+
+		want := []byte{3, 1, 7}
+		if got := coders.Encode(c, row); !cmp.Equal(got, want) {
+			t.Errorf("encoding not equal: want %v, got %v", want, got)
+		}
+	})
+	t.Run("setFields", func(t *testing.T) {
+		row := coders.Decode(c, test.data)
+
+		row.Set("first", "do")
+		row.Set("second", "ray")
+		row.Set("third", "mi")
+
+		want := []byte{3, 1, 0, 2, 'd', 'o', 3, 'r', 'a', 'y', 2, 'm', 'i'}
+		if got := coders.Encode(c, row); !cmp.Equal(got, want) {
+			t.Errorf("encoding not equal: want %v, got %v", want, got)
+		}
+	})
+	t.Run("setFields", func(t *testing.T) {
+		row := coders.Decode(c, test.data)
+
+		row.Set("first", nil)
+		row.Set("second", "ray")
+		row.Set("third", nil)
+
+		want := []byte{3, 1, 5, 3, 'r', 'a', 'y'}
+		if got := coders.Encode(c, row); !cmp.Equal(got, want) {
+			t.Errorf("encoding not equal: want %v, got %v", want, got)
+		}
+	})
+
+}
+
 // BenchmarkRoundtrip initial, unoptimized results.
 //
 // goos: linux

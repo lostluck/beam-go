@@ -17,6 +17,7 @@
 package schema
 
 import (
+	"bytes"
 	"fmt"
 
 	"google.golang.org/protobuf/encoding/prototext"
@@ -43,13 +44,13 @@ func (v *RowValue) Set(fieldname string, val any) {
 	fnum := v.nameToNum[fieldname]
 	v.fields[fnum].Val = val
 	if val == nil {
-		v.nils = clearBit(v.nils, fnum)
-	} else {
 		v.nils = setBit(v.nils, fnum)
+	} else {
+		v.nils = clearBit(v.nils, fnum)
 	}
 }
 
-// Sets the bit at pos in the byte b.
+// Sets the nil bit for field f.
 func setBit(nils []byte, f int) []byte {
 	i, pos := f/8, f%8
 	nils[i] |= (1 << pos)
@@ -274,7 +275,7 @@ func (c *rowCoder) Decode(dec *coders.Decoder) any {
 	nf := dec.Varint()
 	// Varint for the length of the packed bit field for nils.
 	// This is just a normal Byte buffer decoder.
-	nils := dec.Bytes()
+	nils := bytes.Clone(dec.Bytes())
 
 	row := RowValue{
 		numFields: nf,
