@@ -29,17 +29,24 @@ import (
 // RowValue represents a dynamic row type that is defined by a Beam Row Schema.
 type RowValue struct {
 	numFields uint64
-	nils      []byte // packed bit fields.
+	nils      []byte // packed bit field representing which fields are nil.
 
 	nameToNum map[string]int
 	fields    []fieldValue
 }
 
+// fieldValue is a container for retaining the value of a field.
 type fieldValue struct {
 	Val any
 }
 
-// Sets the value for the given field, and updates the nil bit.
+// Get the value for the given field, and updates the nil bit.
+func (v *RowValue) Get(fieldname string) any {
+	fnum := v.nameToNum[fieldname]
+	return v.fields[fnum].Val
+}
+
+// Set the value for the given field, and updates the nil bit.
 func (v *RowValue) Set(fieldname string, val any) {
 	fnum := v.nameToNum[fieldname]
 	v.fields[fnum].Val = val

@@ -170,6 +170,20 @@ func TestRowValue(t *testing.T) {
 		}
 	})
 
+	t.Run("getFields", func(t *testing.T) {
+		row := coders.Decode(c, test.data)
+
+		if got, want := row.Get("first"), "ab"; got != want {
+			t.Errorf("unexpected first field value: want %v, got %v", want, got)
+		}
+		if got, want := row.Get("second"), (any)(nil); got != want {
+			t.Errorf("unexpected first field value: want %v, got %v", want, got)
+		}
+		if got, want := row.Get("third"), "beam"; got != want {
+			t.Errorf("unexpected first field value: want %v, got %v", want, got)
+		}
+	})
+
 }
 
 // BenchmarkRoundtrip initial, unoptimized results.
