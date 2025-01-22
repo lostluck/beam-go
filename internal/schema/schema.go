@@ -85,6 +85,7 @@ func (c *RowValueCoder) Decode(dec *coders.Decoder) RowValue {
 	return c.rawCoder.Decode(dec).(RowValue)
 }
 
+// Encode will convert the RowValue into bytes based on this coder's schema.
 func (c *RowValueCoder) Encode(enc *coders.Encoder, val RowValue) {
 	c.rawCoder.Encode(enc, val)
 }

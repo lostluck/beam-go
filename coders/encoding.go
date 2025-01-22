@@ -32,6 +32,7 @@ type Encoder struct {
 	space [100]byte // Prellocated buffer to avoid allocations for small size arguments.
 }
 
+// NewEncoder creates a new encoder.
 func NewEncoder() *Encoder {
 	var enc Encoder
 	enc.data = enc.space[:0] // Arrange to use builtin buffer
@@ -82,7 +83,7 @@ func (e *Encoder) Bytes(arg []byte) {
 	copy(data[prefix:], arg)
 }
 
-// String encodes an arg of type string.
+// StringUtf8 encodes an arg of type string.
 // For a string, we encode its length as a varint, followed by the serialized content.
 //
 // This matches with "beam:coder:string_utf8:v1" of the beam_runner_api.proto coders.
@@ -193,6 +194,7 @@ func (e *Encoder) IntervalWindow(end time.Time, dur time.Duration) {
 func (e *Encoder) GlobalWindow() {
 }
 
+// GWC is a nonce representing the Global Window Coder.
 type GWC struct{}
 
 // Encode encodes this window.
@@ -266,8 +268,10 @@ func EncodeWindowedValueHeader[W window](e *Encoder, eventTime time.Time, window
 	e.Pane(pane)
 }
 
+// PaneInfo is an experimental holder for pane info.
 type PaneInfo struct{}
 
+// Pane decodes pane info from bytes.
 func (e *Encoder) Pane(pane PaneInfo) {
 	e.Grow(1)[0] = 0x04
 }
@@ -376,7 +380,7 @@ func (e *Encoder) Int(arg int) {
 	e.Uint64(uint64(arg))
 }
 
-// Float32 encodes an arg of type float32.
+// Float encodes an arg of type float32.
 func (e *Encoder) Float(arg float32) {
 	binary.BigEndian.PutUint32(e.Grow(4), math.Float32bits(arg))
 }

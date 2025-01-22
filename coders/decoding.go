@@ -174,7 +174,7 @@ func (d *Decoder) Complex128() complex128 {
 	return complex(d.Double(), d.Double())
 }
 
-// String decodes a value of type string.
+// StringUtf8 decodes a value of type string.
 func (d *Decoder) StringUtf8() string {
 	return string(d.Bytes())
 }
@@ -185,6 +185,7 @@ func (d *Decoder) Bytes() []byte {
 	return d.Read(int(n))
 }
 
+// Timestamp decodes a time.Time from the beam standard timestamp encoding.
 func (d *Decoder) Timestamp() time.Time {
 	msec := d.Uint64()
 	return time.UnixMilli((int64)(msec) + math.MinInt64)
@@ -196,11 +197,14 @@ func (d *Decoder) Timestamp() time.Time {
 func (d *Decoder) GlobalWindow() {
 }
 
+// Pane decodes a PaneInfo.
 func (d *Decoder) Pane() PaneInfo {
 	d.Read(1)
 	return PaneInfo{}
 }
 
+// DecodeWindowedValueHeader produces the eventime, the windows, and pane from
+// an encoded window value header.
 func DecodeWindowedValueHeader[W window](d *Decoder) (time.Time, []W, PaneInfo) {
 	et := d.Timestamp()
 	n := d.Uint32()
