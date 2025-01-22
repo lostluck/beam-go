@@ -112,6 +112,31 @@ var (
 				'\u00a9', '\u0046', // int64
 				4, 'b', 'e', 'a', 'm', // string
 			},
+		}, {
+			name: "nums",
+			schema: &pipepb.Schema{
+				Fields: []*pipepb.Field{
+					{Name: "boolean", Type: atomT(false, pipepb.AtomicType_BOOLEAN)},
+					{Name: "byte", Type: atomT(false, pipepb.AtomicType_BYTE)},
+					{Name: "bytes", Type: atomT(false, pipepb.AtomicType_BYTES)},
+					{Name: "double", Type: atomT(false, pipepb.AtomicType_DOUBLE)},
+					{Name: "float", Type: atomT(false, pipepb.AtomicType_FLOAT)},
+					{Name: "short", Type: atomT(false, pipepb.AtomicType_INT16)},
+					{Name: "int", Type: atomT(false, pipepb.AtomicType_INT32)},
+					{Name: "long", Type: atomT(false, pipepb.AtomicType_INT64)},
+				},
+			},
+			data: []byte{8, // 8 fields
+				0,           // no nulls
+				1,           // true bool
+				2,           // single byte
+				2, '2', '2', // []byte
+				'\u007f', '\u00ef', '\u00ff', '\u00ff', '\u00ff', '\u00ff', '\u00ff', '\u00ff', // double
+				64, 73, 15, 208, // float
+				'\u00a9', '\u0046', // int16
+				'\u00a9', '\u0046', // int32
+				'\u00a9', '\u0046', // int64
+			},
 		},
 	}
 )
@@ -120,7 +145,6 @@ func TestRowCoder(t *testing.T) {
 	for _, test := range suite {
 		t.Run(test.name, func(t *testing.T) {
 			c := ToCoder(test.schema)
-
 			r := coders.Decode(c, test.data)
 			if got, want := coders.Encode(c, r), test.data; !cmp.Equal(got, want) {
 				t.Errorf("round trip decode-encode not equal: want %v, got %v", want, got)
@@ -202,13 +226,18 @@ func BenchmarkRoundtrip(b *testing.B) {
 	for _, test := range suite {
 		b.Run(test.name, func(b *testing.B) {
 			c := ToCoder(test.schema)
+			// Mild shenanigans to prevent unnecessary allocations.
+			enc := coders.NewEncoder()
+			dec := *coders.NewDecoder(test.data)
+			n := len(test.data)
+
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				r := coders.Decode(c, test.data)
-				if got, want := coders.Encode(c, r), test.data; !cmp.Equal(got, want) {
-					b.Errorf("round trip decode-encode not equal: want %v, got %v", want, got)
-				}
+				enc.Reset(n)
+				dec = *coders.NewDecoder(test.data)
+				r := c.Decode(&dec)
+				c.Encode(enc, r)
 			}
 		})
 	}
