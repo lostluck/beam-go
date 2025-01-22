@@ -189,7 +189,7 @@ func TestRowValue(t *testing.T) {
 		row.Set("third", nil)
 
 		want := []byte{3, 1, 5, 3, 'r', 'a', 'y'}
-		if got := coders.Encode(c, row); !cmp.Equal(got, want) {
+		if got := coders.Encode(c, row); !bytes.Equal(got, want) {
 			t.Errorf("encoding not equal: want %v, got %v", want, got)
 		}
 	})
@@ -230,6 +230,7 @@ func BenchmarkRoundtrip(b *testing.B) {
 			enc := coders.NewEncoder()
 			dec := *coders.NewDecoder(test.data)
 			n := len(test.data)
+			want := test.data
 
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -238,6 +239,9 @@ func BenchmarkRoundtrip(b *testing.B) {
 				dec = *coders.NewDecoder(test.data)
 				r := c.Decode(&dec)
 				c.Encode(enc, r)
+				if got := enc.Data(); !bytes.Equal(got, want) {
+					b.Errorf("encoding not equal: want %v, got %v", want, got)
+				}
 			}
 		})
 	}
