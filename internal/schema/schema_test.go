@@ -244,7 +244,7 @@ func BenchmarkRoundtrip(b *testing.B) {
 }
 
 //go:embed standard_coders.yaml
-var std_coders_yaml []byte
+var standardCodersYaml []byte
 
 // spec is a set of conditions that a coder must pass.
 type spec struct {
@@ -260,7 +260,7 @@ type coder struct {
 }
 
 func TestStandardRowCoders(t *testing.T) {
-	specs := bytes.Split(std_coders_yaml, []byte("\n---\n"))
+	specs := bytes.Split(standardCodersYaml, []byte("\n---\n"))
 	for i, data := range specs {
 		spec := spec{}
 		if err := yaml.Unmarshal(data, &spec); err != nil {
