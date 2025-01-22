@@ -34,12 +34,53 @@ func roundTripMakeCoder[T any](v T) struct {
 		val: v,
 		coder: func(v any) any {
 			c := MakeCoder[T]()
-			e := NewEncoder()
-			c.Encode(e, v.(T))
-			d := NewDecoder(e.Data())
-			return c.Decode(d)
+			data := Encode(c, v.(T))
+			return Decode(c, data)
 		},
 	}
+}
+
+type manualCoder[T any] struct {
+	encode func(enc *Encoder, v T)
+	decode func(dec *Decoder) T
+}
+
+var _ Coder[int] = (*manualCoder[int])(nil)
+
+func (c *manualCoder[T]) Encode(enc *Encoder, v T) {
+	c.encode(enc, v)
+}
+
+func (c *manualCoder[T]) Decode(dec *Decoder) T {
+	return c.decode(dec)
+}
+
+func makeManualCoder[T any](encode func(enc *Encoder, v T), decode func(dec *Decoder) T) Coder[T] {
+	return &manualCoder[T]{encode: encode, decode: decode}
+}
+
+func manualRoundTripCoder[T any](v T, encode func(enc *Encoder, v T), decode func(dec *Decoder) T) struct {
+	val   any
+	coder func(v any) any
+} {
+	return struct {
+		val   any
+		coder func(v any) any
+	}{
+		val: v,
+		coder: func(v any) any {
+			c := makeManualCoder(encode, decode)
+			data := Encode(c, v.(T))
+			return Decode(c, data)
+		},
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 func TestMakeCoder(t *testing.T) {
@@ -77,6 +118,20 @@ func TestMakeCoder(t *testing.T) {
 		//	roundTripMakeCoder(&struct{ Any int }{Any: 0xDEADBEEF}), // Pointer test
 
 		roundTripMakeCoder(struct{ s int }{}), // TODO: Forbid empty types?
+
+		manualRoundTripCoder(int64(19), (*Encoder).Int64, (*Decoder).Int64),
+		manualRoundTripCoder(int32(20), (*Encoder).Int32, (*Decoder).Int32),
+		manualRoundTripCoder(int16(21), (*Encoder).Int16, (*Decoder).Int16),
+		manualRoundTripCoder(int8(22), (*Encoder).Int8, (*Decoder).Int8),
+		manualRoundTripCoder(int(23), (*Encoder).Int, (*Decoder).Int),
+		manualRoundTripCoder(uint64(24), (*Encoder).Uint64, (*Decoder).Uint64),
+		manualRoundTripCoder(uint32(25), (*Encoder).Uint32, (*Decoder).Uint32),
+		manualRoundTripCoder(uint16(26), (*Encoder).Uint16, (*Decoder).Uint16),
+		manualRoundTripCoder(uint8(27), (*Encoder).Uint8, (*Decoder).Uint8),
+		manualRoundTripCoder(uint(28), (*Encoder).Uint, (*Decoder).Uint),
+		manualRoundTripCoder(rune('B'), (*Encoder).Rune, (*Decoder).Rune),
+
+		manualRoundTripCoder(must(time.Parse("2006-01-02", "2024-01-21")), (*Encoder).Timestamp, (*Decoder).Timestamp),
 	}
 	for _, test := range tests {
 		t.Run(reflect.TypeOf(test.val).Name(), func(t *testing.T) {
