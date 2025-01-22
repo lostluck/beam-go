@@ -46,10 +46,10 @@ type dofnWrap struct {
 
 func jsonDoFnMarshallers() json.Options {
 	return json.WithMarshalers(
-		json.NewMarshalers(
+		json.JoinMarshalers(
 			// Turn all beam mixins into {} by default, as state should be reconstrutable from
 			// the types anyway.
-			json.MarshalFuncV2(func(enc *jsontext.Encoder, byp bypassInterface, opts json.Options) error {
+			json.MarshalToFunc(func(enc *jsontext.Encoder, byp bypassInterface, opts json.Options) error {
 				enc.WriteToken(jsontext.ObjectStart)
 				enc.WriteToken(jsontext.ObjectEnd)
 				return nil
@@ -60,12 +60,12 @@ func jsonDoFnMarshallers() json.Options {
 
 func jsonDoFnUnmarshallers(typeReg map[string]reflect.Type, name string) json.Options {
 	return json.WithUnmarshalers(
-		json.NewUnmarshalers(
+		json.JoinUnmarshalers(
 			// Handle mixins by skipping the values.
-			json.UnmarshalFuncV2(func(dec *jsontext.Decoder, val bypassInterface, opts json.Options) error {
+			json.UnmarshalFromFunc(func(dec *jsontext.Decoder, val bypassInterface, opts json.Options) error {
 				return dec.SkipValue()
 			}),
-			json.UnmarshalFuncV2(func(dec *jsontext.Decoder, val *dofnWrap, opts json.Options) error {
+			json.UnmarshalFromFunc(func(dec *jsontext.Decoder, val *dofnWrap, opts json.Options) error {
 				for {
 					tok, err := dec.ReadToken()
 					if err != nil {
