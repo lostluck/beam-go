@@ -210,18 +210,18 @@ func TestRowValue(t *testing.T) {
 
 }
 
-// BenchmarkRoundtrip initial, unoptimized results.
-//
+// BenchmarkRoundtrip results
 // goos: linux
 // goarch: amd64
 // pkg: lostluck.dev/beam-go/internal/schema
 // cpu: 12th Gen Intel(R) Core(TM) i7-1260P
-// BenchmarkRoundtrip/empty-16         	  307964	      3648 ns/op	    1720 B/op	      24 allocs/op
-// BenchmarkRoundtrip/oneString-16     	  220701	      5174 ns/op	    1816 B/op	      28 allocs/op
-// BenchmarkRoundtrip/oneNillableString_nil-16         	  250714	      4303 ns/op	    1800 B/op	      27 allocs/op
-// BenchmarkRoundtrip/oneNillableString_val-16         	  182938	      6614 ns/op	    1952 B/op	      31 allocs/op
-// BenchmarkRoundtrip/variousNillableStrings-16        	   98568	     11805 ns/op	    2312 B/op	      38 allocs/op
-// BenchmarkRoundtrip/various-16                       	   44137	     26037 ns/op	    3072 B/op	      47 allocs/op
+// BenchmarkRoundtrip/empty-16         					28556260	        38.34 ns/op	       0 B/op	       0 allocs/op
+// BenchmarkRoundtrip/oneString-16     					16689621	        86.45 ns/op	      24 B/op	       1 allocs/op
+// BenchmarkRoundtrip/oneNillableString_nil-16         	15060780	        71.35 ns/op	      24 B/op	       1 allocs/op
+// BenchmarkRoundtrip/oneNillableString_val-16         	13067181	       103.6 ns/op	      26 B/op	       2 allocs/op
+// BenchmarkRoundtrip/variousNillableStrings-16        	 6216176	       176.4 ns/op	      88 B/op	       3 allocs/op
+// BenchmarkRoundtrip/various-16                       	 3319713	       337.1 ns/op	     228 B/op	       2 allocs/op
+// BenchmarkRoundtrip/nums-16                          	 4294832	       282.1 ns/op	     192 B/op	       1 allocs/op
 func BenchmarkRoundtrip(b *testing.B) {
 	for _, test := range suite {
 		b.Run(test.name, func(b *testing.B) {

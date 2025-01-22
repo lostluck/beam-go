@@ -30,64 +30,100 @@ import (
 type RowValue struct {
 	numFields uint64
 	nils      []byte // packed bit field representing which fields are nil.
+	dirty     bool   // Dirty bit to copy nils on write.
 
 	nameToNum map[string]int
 	fields    []fieldValue
 }
 
-// fieldValue is a container for retaining the value of a field.
-type fieldValue struct {
-	Val any
-}
-
 // Get the value for the given field, and updates the nil bit.
 func (v *RowValue) Get(fieldname string) any {
 	fnum := v.nameToNum[fieldname]
-	return v.fields[fnum].Val
+	return v.fields[fnum].Interface()
 }
 
 // Set the value for the given field, and updates the nil bit.
 func (v *RowValue) Set(fieldname string, val any) {
 	fnum := v.nameToNum[fieldname]
-	v.fields[fnum].Val = val
+	v.fields[fnum] = valFromIface(val)
 	if val == nil {
-		v.nils = setBit(v.nils, fnum)
+		v.setBit(fnum)
 	} else {
-		v.nils = clearBit(v.nils, fnum)
+		v.clearBit(fnum)
 	}
 }
 
 // Sets the nil bit for field f.
-func setBit(nils []byte, f int) []byte {
+func (v *RowValue) setBit(f int) {
+	if !v.dirty {
+		v.dirty = true
+		v.nils = bytes.Clone(v.nils)
+	}
 	i, pos := f/8, f%8
-	nils[i] |= (1 << pos)
-	return nils
+	v.nils[i] |= (1 << pos)
 }
 
 // Clears the bit for field  in b.
-func clearBit(nils []byte, f int) []byte {
+func (v *RowValue) clearBit(f int) {
+	if !v.dirty {
+		v.dirty = true
+		v.nils = bytes.Clone(v.nils)
+	}
 	i, pos := f/8, f%8
 	mask := byte(^(1 << pos))
-	nils[i] &= mask
-	return nils
+	v.nils[i] &= mask
 }
 
 // RowValueCoder is a stateless coder for a provided schema to dynamic RowValues.
 type RowValueCoder struct {
 	schema   *pipepb.Schema
-	rawCoder coders.Coder[any]
+	rawCoder *rowCoder
 }
 
 var _ coders.Coder[RowValue] = (*RowValueCoder)(nil)
 
 // Decode will decode bytes into a RowValue
 func (c *RowValueCoder) Decode(dec *coders.Decoder) RowValue {
-	return c.rawCoder.Decode(dec).(RowValue)
+	// We lift out the row coder implementation directly
+	// to avoid extra allocations through interfaces.
+
+	// Varint for the Number of Row field in this encoded row.
+	nf := dec.Varint()
+	// Varint for the length of the packed bit field for nils.
+	// This is just a normal Byte buffer decoder.
+	nils := dec.Bytes()
+
+	row := RowValue{
+		numFields: nf,
+		nils:      nils,
+		nameToNum: c.rawCoder.namesToNums,
+		fields:    make([]fieldValue, nf),
+	}
+	for i, fc := range c.rawCoder.fields {
+		if c.rawCoder.nullable[i] && isFieldNil(row.nils, i) {
+			continue
+		}
+		row.fields[i] = fc.Decode(dec)
+	}
+	return row
 }
 
 // Encode will convert the RowValue into bytes based on this coder's schema.
-func (c *RowValueCoder) Encode(enc *coders.Encoder, val RowValue) {
-	c.rawCoder.Encode(enc, val)
+func (c *RowValueCoder) Encode(enc *coders.Encoder, row RowValue) {
+	// We lift out the row coder implementation directly
+	// to avoid extra allocations through interfaces.
+
+	// Row header has the number of fields
+	enc.Varint(uint64(len(row.fields)))
+	// Followed by the nil bits.
+	enc.Bytes(row.nils)
+
+	for i, fc := range c.rawCoder.fields {
+		if c.rawCoder.nullable[i] && isFieldNil(row.nils, i) {
+			continue
+		}
+		fc.Encode(enc, row.fields[i])
+	}
 }
 
 // ToCoder takes a schema a produces a coder for RowValues of that schema.
@@ -95,16 +131,18 @@ func ToCoder(schema *pipepb.Schema) coders.Coder[RowValue] {
 	if schema.GetEncodingPositionsSet() {
 		panic("changed encoding positions not yet supported")
 	}
-	rawCoder := buildSchemaCoder(schema)
+	rawCoder := buildSchemaCoder(schema).(*rowCoder)
 	return &RowValueCoder{
 		schema:   proto.Clone(schema).(*pipepb.Schema),
 		rawCoder: rawCoder,
 	}
 }
 
-func buildSchemaCoder(schema *pipepb.Schema) coders.Coder[any] {
+func buildSchemaCoder(schema *pipepb.Schema) coders.Coder[fieldValue] {
 	c := &rowCoder{
 		namesToNums: make(map[string]int),
+		fields:      make([]coders.Coder[fieldValue], 0, len(schema.GetFields())),
+		nullable:    make([]bool, 0, len(schema.GetFields())),
 	}
 	for i, f := range schema.GetFields() {
 		c.namesToNums[f.GetName()] = i
@@ -115,7 +153,7 @@ func buildSchemaCoder(schema *pipepb.Schema) coders.Coder[any] {
 	return c
 }
 
-func buildFieldCoder(ft *pipepb.FieldType) coders.Coder[any] {
+func buildFieldCoder(ft *pipepb.FieldType) coders.Coder[fieldValue] {
 	switch ti := ft.GetTypeInfo().(type) {
 	case *pipepb.FieldType_AtomicType:
 		return buildAtomicCoder(ti.AtomicType)
@@ -134,33 +172,134 @@ func buildFieldCoder(ft *pipepb.FieldType) coders.Coder[any] {
 	}
 }
 
-func buildAtomicCoder(atype pipepb.AtomicType) coders.Coder[any] {
+func buildAtomicCoder(atype pipepb.AtomicType) coders.Coder[fieldValue] {
 	switch atype {
 	case pipepb.AtomicType_BOOLEAN:
-		return wrapCoder(coders.MakeCoder[bool]())
+		return &boolCoder{}
 	case pipepb.AtomicType_BYTE:
-		return wrapCoder(coders.MakeCoder[byte]())
+		return &byteCoder{}
 	case pipepb.AtomicType_BYTES:
-		return wrapCoder(coders.MakeCoder[[]byte]())
+		return &bytesCoder{}
 	case pipepb.AtomicType_DOUBLE:
-		return wrapCoder(coders.MakeCoder[float64]())
+		return &doubleCoder{}
 	case pipepb.AtomicType_FLOAT:
-		return wrapCoder(coders.MakeCoder[float32]())
+		return &floatCoder{}
 	case pipepb.AtomicType_INT16:
-		return wrapCoder(coders.MakeCoder[int16]())
+		return &varInt16Coder{}
 	case pipepb.AtomicType_INT32:
-		return wrapCoder(coders.MakeCoder[int32]())
+		return &varInt32Coder{}
 	case pipepb.AtomicType_INT64:
-		return wrapCoder(coders.MakeCoder[int64]())
+		return &varInt64Coder{}
 
 	case pipepb.AtomicType_STRING:
-		return wrapCoder(coders.MakeCoder[string]())
+		return &stringCoder{}
 	default:
 		panic(fmt.Sprintf("unimplemented atomic field type: %v", atype))
 	}
 }
 
-func buildArrayCoder(ftype *pipepb.FieldType) coders.Coder[any] {
+type boolCoder struct{}
+
+func (*boolCoder) Encode(enc *coders.Encoder, v fieldValue) {
+	enc.Bool(v.num > 0)
+}
+
+func (*boolCoder) Decode(dec *coders.Decoder) fieldValue {
+	if dec.Bool() {
+		return fieldValue{typ: boolType, num: 1}
+	}
+	return fieldValue{typ: boolType, num: 0}
+}
+
+type byteCoder struct{}
+
+func (*byteCoder) Encode(enc *coders.Encoder, v fieldValue) {
+	enc.Byte(byte(v.num))
+}
+
+func (*byteCoder) Decode(dec *coders.Decoder) fieldValue {
+	return fieldValue{typ: uint8Type, num: uint64(dec.Byte())}
+}
+
+type bytesCoder struct{}
+
+func (*bytesCoder) Encode(enc *coders.Encoder, v fieldValue) {
+	enc.Bytes(v.getBytes())
+}
+
+func (*bytesCoder) Decode(dec *coders.Decoder) fieldValue {
+	return valueOfBytes(dec.Bytes())
+}
+
+type varInt16Coder struct{}
+
+func (*varInt16Coder) Encode(enc *coders.Encoder, v fieldValue) {
+	enc.Varint(v.num)
+}
+
+func (*varInt16Coder) Decode(dec *coders.Decoder) fieldValue {
+	return fieldValue{typ: int16Type, num: dec.Varint()}
+}
+
+type varInt32Coder struct{}
+
+func (*varInt32Coder) Encode(enc *coders.Encoder, v fieldValue) {
+	enc.Varint(v.num)
+}
+
+func (*varInt32Coder) Decode(dec *coders.Decoder) fieldValue {
+	return fieldValue{typ: int32Type, num: dec.Varint()}
+}
+
+type varInt64Coder struct{}
+
+func (*varInt64Coder) Encode(enc *coders.Encoder, v fieldValue) {
+	enc.Varint(v.num)
+}
+
+func (*varInt64Coder) Decode(dec *coders.Decoder) fieldValue {
+	return fieldValue{typ: int64Type, num: dec.Varint()}
+}
+
+type stringCoder struct{}
+
+func (*stringCoder) Encode(enc *coders.Encoder, v fieldValue) {
+	enc.StringUtf8(v.getString())
+}
+
+func (*stringCoder) Decode(dec *coders.Decoder) fieldValue {
+	return valueOfString(dec.StringUtf8())
+}
+
+type doubleCoder struct{}
+
+func (*doubleCoder) Encode(enc *coders.Encoder, v fieldValue) {
+	// Using Uint64 directly instead of indirecting through multiple
+	// passes of math.Float64frombits.
+	enc.Uint64(v.num)
+}
+
+func (*doubleCoder) Decode(dec *coders.Decoder) fieldValue {
+	// Using Uint64 directly instead of indirecting through multiple
+	// passes of math.Float64frombits.
+	return fieldValue{typ: float64Type, num: dec.Uint64()}
+}
+
+type floatCoder struct{}
+
+func (*floatCoder) Encode(enc *coders.Encoder, v fieldValue) {
+	// Using Uint32 directly instead of indirecting through multiple
+	// passes of math.Float64frombits.
+	enc.Uint32(uint32(v.num))
+}
+
+func (*floatCoder) Decode(dec *coders.Decoder) fieldValue {
+	// Using Uint32 directly instead of indirecting through multiple
+	// passes of math.Float64frombits.
+	return fieldValue{typ: float32Type, num: uint64(dec.Uint32())}
+}
+
+func buildArrayCoder(ftype *pipepb.FieldType) coders.Coder[fieldValue] {
 	fc := buildFieldCoder(ftype)
 	if ftype.GetNullable() {
 		fc = &nullableCoder{wrap: fc}
@@ -168,7 +307,7 @@ func buildArrayCoder(ftype *pipepb.FieldType) coders.Coder[any] {
 	return &arrayCoder{field: fc}
 }
 
-func buildMapCoder(maptype *pipepb.MapType) coders.Coder[any] {
+func buildMapCoder(maptype *pipepb.MapType) coders.Coder[fieldValue] {
 	kc := buildFieldCoder(maptype.GetKeyType())
 	vc := buildFieldCoder(maptype.GetValueType())
 	if maptype.GetValueType().GetNullable() {
@@ -177,7 +316,7 @@ func buildMapCoder(maptype *pipepb.MapType) coders.Coder[any] {
 	return &mapCoder{key: kc, value: vc}
 }
 
-func buildLogicalCoder(logtype *pipepb.LogicalType) coders.Coder[any] {
+func buildLogicalCoder(logtype *pipepb.LogicalType) coders.Coder[fieldValue] {
 	urn := logtype.GetUrn()
 	switch urn {
 	case "beam:logical_type:millis_instant:v1":
@@ -200,20 +339,20 @@ func buildLogicalCoder(logtype *pipepb.LogicalType) coders.Coder[any] {
 }
 
 type nullableCoder struct {
-	wrap coders.Coder[any]
+	wrap coders.Coder[fieldValue]
 }
 
 // Decode implements coders.Coder.
-func (c *nullableCoder) Decode(dec *coders.Decoder) any {
+func (c *nullableCoder) Decode(dec *coders.Decoder) fieldValue {
 	if dec.Byte() == 0x00 {
-		return nil
+		return fieldValue{typ: nilType}
 	}
 	return c.wrap.Decode(dec)
 }
 
 // Encode implements coders.Coder.
-func (c *nullableCoder) Encode(enc *coders.Encoder, v any) {
-	if v == nil {
+func (c *nullableCoder) Encode(enc *coders.Encoder, v fieldValue) {
+	if v.typ == nilType {
 		enc.Byte(0x00)
 		return
 	}
@@ -222,22 +361,22 @@ func (c *nullableCoder) Encode(enc *coders.Encoder, v any) {
 }
 
 type arrayCoder struct {
-	field coders.Coder[any]
+	field coders.Coder[fieldValue]
 }
 
 // Decode implements coders.Coder.
-func (c *arrayCoder) Decode(dec *coders.Decoder) any {
+func (c *arrayCoder) Decode(dec *coders.Decoder) fieldValue {
 	n := dec.Uint32()
-	arr := make([]any, 0, n)
+	arr := make([]fieldValue, 0, n)
 	for range n {
 		arr = append(arr, c.field.Decode(dec))
 	}
-	return arr
+	return fieldValue(valueOfIface(arr))
 }
 
 // Encode implements coders.Coder.
-func (c *arrayCoder) Encode(enc *coders.Encoder, val any) {
-	arr := val.([]any)
+func (c *arrayCoder) Encode(enc *coders.Encoder, val fieldValue) {
+	arr := val.getIface().([]fieldValue)
 	enc.Int32(int32(len(arr)))
 	for _, v := range arr {
 		c.field.Encode(enc, v)
@@ -245,22 +384,22 @@ func (c *arrayCoder) Encode(enc *coders.Encoder, val any) {
 }
 
 type mapCoder struct {
-	key, value coders.Coder[any]
+	key, value coders.Coder[fieldValue]
 }
 
-func (c *mapCoder) Decode(dec *coders.Decoder) any {
+func (c *mapCoder) Decode(dec *coders.Decoder) fieldValue {
 	n := dec.Uint32()
-	m := make(map[any]any, n)
+	m := make(map[fieldValue]fieldValue, n)
 	for range n {
 		k := c.key.Decode(dec)
 		v := c.value.Decode(dec)
 		m[k] = v
 	}
-	return m
+	return valueOfIface(m)
 }
 
-func (c *mapCoder) Encode(enc *coders.Encoder, val any) {
-	m := val.(map[any]any)
+func (c *mapCoder) Encode(enc *coders.Encoder, val fieldValue) {
+	m := val.getIface().(map[fieldValue]fieldValue)
 	enc.Int32(int32(len(m)))
 	for k, v := range m {
 		c.key.Encode(enc, k)
@@ -268,17 +407,17 @@ func (c *mapCoder) Encode(enc *coders.Encoder, val any) {
 	}
 }
 
-// rowCoder is a `coders.Coder[any]` that produces a RowValue wrapped in an interface.
+// rowCoder is a `coders.Coder[fieldValue]` that produces a RowValue wrapped in an interface.
 type rowCoder struct {
 	namesToNums map[string]int // precomputed index.
-	fields      []coders.Coder[any]
+	fields      []coders.Coder[fieldValue]
 	nullable    []bool
 }
 
-var _ coders.Coder[any] = (*rowCoder)(nil)
+var _ coders.Coder[fieldValue] = (*rowCoder)(nil)
 
 // Decode implements coders.Coder.
-func (c *rowCoder) Decode(dec *coders.Decoder) any {
+func (c *rowCoder) Decode(dec *coders.Decoder) fieldValue {
 	// Varint for the Number of Row field in this encoded row.
 	nf := dec.Varint()
 	// Varint for the length of the packed bit field for nils.
@@ -295,14 +434,14 @@ func (c *rowCoder) Decode(dec *coders.Decoder) any {
 		if c.nullable[i] && isFieldNil(row.nils, i) {
 			continue
 		}
-		row.fields[i].Val = fc.Decode(dec)
+		row.fields[i] = fc.Decode(dec)
 	}
-	return row
+	return valueOfIface(row)
 }
 
 // Encode implements coders.Coder.
-func (c *rowCoder) Encode(enc *coders.Encoder, v any) {
-	row := v.(RowValue)
+func (c *rowCoder) Encode(enc *coders.Encoder, v fieldValue) {
+	row := v.getIface().(RowValue)
 	// Row header has the number of fields
 	enc.Varint(uint64(len(row.fields)))
 	// Followed by the nil bits.
@@ -312,7 +451,7 @@ func (c *rowCoder) Encode(enc *coders.Encoder, v any) {
 		if c.nullable[i] && isFieldNil(row.nils, i) {
 			continue
 		}
-		fc.Encode(enc, row.fields[i].Val)
+		fc.Encode(enc, row.fields[i])
 	}
 }
 
@@ -326,37 +465,19 @@ func isFieldNil(nils []byte, f int) bool {
 	return i < len(nils) && len(nils) != 0 && (nils[i]>>uint8(b))&0x1 == 1
 }
 
-func wrapCoder[E any, C coders.Coder[E]](coder C) coders.Coder[any] {
-	return &anyCoderAdapter[E, C]{wrapped: coder}
-}
-
-type anyCoderAdapter[E any, C coders.Coder[E]] struct {
-	wrapped C
-}
-
-// Decode implements coders.Coder.
-func (c *anyCoderAdapter[E, C]) Decode(dec *coders.Decoder) any {
-	return c.wrapped.Decode(dec)
-}
-
-// Encode implements coders.Coder.
-func (c *anyCoderAdapter[E, C]) Encode(enc *coders.Encoder, v any) {
-	c.wrapped.Encode(enc, v.(E))
-}
-
 // Logical Coders
 
 // int64Coder is a fixed sized bigEndian representation of an int64.
 type int64Coder struct{}
 
 // Decode implements coders.Coder.
-func (c *int64Coder) Decode(dec *coders.Decoder) any {
-	return dec.Int64()
+func (c *int64Coder) Decode(dec *coders.Decoder) fieldValue {
+	return fieldValue{typ: int64Type, num: uint64(dec.Int64())}
 }
 
 // Encode implements coders.Coder.
-func (c *int64Coder) Encode(enc *coders.Encoder, v any) {
-	enc.Int64(v.(int64))
+func (c *int64Coder) Encode(enc *coders.Encoder, v fieldValue) {
+	enc.Int64(int64(v.num))
 }
 
 // decimal is a temporary measure for handling the decimal
@@ -369,14 +490,14 @@ type decimal struct {
 
 type decimalCoder struct{}
 
-func (c *decimalCoder) Decode(dec *coders.Decoder) any {
+func (c *decimalCoder) Decode(dec *coders.Decoder) fieldValue {
 	scale := int64(dec.Varint())
 	data := dec.Bytes()
-	return decimal{Scale: scale, TwosComp: data}
+	return valueOfIface(decimal{Scale: scale, TwosComp: data})
 }
 
-func (c *decimalCoder) Encode(enc *coders.Encoder, val any) {
-	deci := val.(decimal)
+func (c *decimalCoder) Encode(enc *coders.Encoder, val fieldValue) {
+	deci := val.getIface().(decimal)
 	enc.Varint(uint64(deci.Scale))
 	enc.Bytes(deci.TwosComp)
 }
