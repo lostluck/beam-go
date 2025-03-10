@@ -12,7 +12,7 @@ require (
 	golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8
 	golang.org/x/sync v0.11.0
 	golang.org/x/text v0.21.0
-	google.golang.org/grpc v1.70.0
+	google.golang.org/grpc v1.71.0
 	google.golang.org/protobuf v1.36.5
 	gopkg.in/yaml.v2 v2.4.0
 )
@@ -37,8 +37,8 @@ require (
 	github.com/aws/smithy-go v1.22.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20241223141626-cff3c89139a3 // indirect
-	github.com/envoyproxy/go-control-plane/envoy v1.32.3 // indirect
-	github.com/envoyproxy/protoc-gen-validate v1.1.0 // indirect
+	github.com/envoyproxy/go-control-plane/envoy v1.32.4 // indirect
+	github.com/envoyproxy/protoc-gen-validate v1.2.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
