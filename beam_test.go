@@ -334,7 +334,7 @@ func TestGBKSum(t *testing.T) {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: 10})
 		keyed := ParDo(s, src.Output, &KeyMod[int]{Mod: mod})
-		grouped := GBK[int, int](s, keyed.Output)
+		grouped := GBK(s, keyed.Output)
 		sums := ParDo(s, grouped, &SumByKey[int, int]{})
 		ParDo(s, sums.Output, &DiscardFn[KV[int, int]]{}, Name("sink"))
 		return nil
@@ -355,7 +355,7 @@ func BenchmarkGBKSum_int(b *testing.B) {
 				imp := Impulse(s)
 				src := ParDo(s, imp, &SourceFn{Count: b.N})
 				keyed := ParDo(s, src.Output, &KeyMod[int]{Mod: mod})
-				grouped := GBK[int, int](s, keyed.Output)
+				grouped := GBK(s, keyed.Output)
 				sums := ParDo(s, grouped, &SumByKey[int, int]{})
 				ParDo(s, sums.Output, discard, Name("sink"))
 				return nil

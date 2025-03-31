@@ -97,6 +97,7 @@ type Transform[E Element] interface {
 	ProcessBundle(dfc *DFC[E]) error
 }
 
+// Iter represents an iterable sequence of elements.
 type Iter[V Element] struct {
 	source func() (V, bool) // source returns true if the element is valid.
 }
@@ -175,6 +176,9 @@ type Pipeline struct {
 	Distributions map[string]struct{ Count, Sum, Min, Max int64 }
 }
 
+// Wait indicates for the caller to block until the pipeline reaches a terminal
+// state. Useful for post processing batch pipelines and testing. Not recommended
+// for streaming pipelines.
 func (pr *Pipeline) Wait(ctx context.Context) error {
 	err := pr.handle.Wait(ctx)
 	// Regardless of whether there's a pipeline error, get the metrics anyway.
@@ -193,6 +197,8 @@ type Composite[O any] interface {
 	Expand(s *Scope) O
 }
 
+// Expand attaches composite transforms onto the given pipeline scope, returning
+// the defined output type.
 func Expand[I Composite[O], O any](parent *Scope, name string, comp I) O {
 	s := &Scope{name: name, parent: parent, g: parent.g}
 	// We do all the expected connections here.
