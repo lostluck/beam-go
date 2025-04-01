@@ -1,7 +1,6 @@
 module lostluck.dev/beam-go
 
 go 1.24.1
-
 require (
 	github.com/go-json-experiment/json v0.0.0-20250119165339-d96285104214
 	github.com/google/go-cmp v0.7.0
@@ -12,7 +11,7 @@ require (
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
 	golang.org/x/sync v0.12.0
 	golang.org/x/text v0.23.0
-	google.golang.org/grpc v1.71.0
+	google.golang.org/grpc v1.71.1
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/yaml.v2 v2.4.0
 )
