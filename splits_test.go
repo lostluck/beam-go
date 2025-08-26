@@ -353,7 +353,7 @@ func (ws *Watchers) newWatcher(sentinelCap int) int {
 // versions of the separation harness.
 type sepHarnessBase[E comparable] struct {
 	WatcherID    int
-	Sleep        time.Duration
+	Sleep        time.Duration `json:",format:iso8601"`
 	Sentinels    []E
 	LocalService string
 }

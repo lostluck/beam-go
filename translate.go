@@ -49,9 +49,9 @@ func jsonDoFnMarshallers() json.Options {
 		json.JoinMarshalers(
 			// Turn all beam mixins into {} by default, as state should be reconstrutable from
 			// the types anyway.
-			json.MarshalToFunc(func(enc *jsontext.Encoder, byp bypassInterface, opts json.Options) error {
-				enc.WriteToken(jsontext.ObjectStart)
-				enc.WriteToken(jsontext.ObjectEnd)
+			json.MarshalToFunc(func(enc *jsontext.Encoder, byp bypassInterface) error {
+				enc.WriteToken(jsontext.BeginObject)
+				enc.WriteToken(jsontext.EndObject)
 				return nil
 			}),
 			// No special handling for marshalling the DoFn otherwise.
@@ -62,10 +62,10 @@ func jsonDoFnUnmarshallers(typeReg map[string]reflect.Type, name string) json.Op
 	return json.WithUnmarshalers(
 		json.JoinUnmarshalers(
 			// Handle mixins by skipping the values.
-			json.UnmarshalFromFunc(func(dec *jsontext.Decoder, val bypassInterface, opts json.Options) error {
+			json.UnmarshalFromFunc(func(dec *jsontext.Decoder, val bypassInterface) error {
 				return dec.SkipValue()
 			}),
-			json.UnmarshalFromFunc(func(dec *jsontext.Decoder, val *dofnWrap, opts json.Options) error {
+			json.UnmarshalFromFunc(func(dec *jsontext.Decoder, val *dofnWrap) error {
 				for {
 					tok, err := dec.ReadToken()
 					if err != nil {
@@ -94,7 +94,7 @@ func jsonDoFnUnmarshallers(typeReg map[string]reflect.Type, name string) json.Op
 								panic(fmt.Sprintf("unknown pardo in transform %v: payload %q", name, val.TypeName))
 							}
 							val.DoFn = reflect.New(dofnRT).Interface()
-							if err := json.UnmarshalDecode(dec, val.DoFn, opts); err != nil {
+							if err := json.UnmarshalDecode(dec, val.DoFn); err != nil {
 								return err
 							}
 							_, err = dec.ReadToken() // '}' (finish reading the value)
