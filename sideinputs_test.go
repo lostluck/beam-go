@@ -66,10 +66,9 @@ type OnlySideIter[E Element] struct {
 
 func (fn *OnlySideIter[E]) ProcessBundle(dfc *DFC[[]byte]) error {
 	return dfc.Process(func(ec ElmC, elm []byte) error {
-		fn.Side.All(ec)(func(elm E) bool {
+		for elm := range fn.Side.All(ec) {
 			fn.Out.Emit(ec, elm)
-			return true
-		})
+		}
 		return nil
 	})
 }
@@ -82,13 +81,11 @@ type OnlySideMap[K, V Element] struct {
 
 func (fn *OnlySideMap[K, V]) ProcessBundle(dfc *DFC[[]byte]) error {
 	return dfc.Process(func(ec ElmC, elm []byte) error {
-		fn.Side.Keys(ec)(func(key K) bool {
-			fn.Side.Get(ec, key)(func(val V) bool {
+		for key := range fn.Side.Keys(ec) {
+			for val := range fn.Side.Get(ec, key) {
 				fn.Out.Emit(ec, KV[K, V]{key, val})
-				return true
-			})
-			return true
-		})
+			}
+		}
 		return nil
 	})
 }
