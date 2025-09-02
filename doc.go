@@ -58,4 +58,9 @@
 //   - TODO Cover launching a binary
 //   - TODO Cover testing and Metrics
 //   - TODO Cover flags
+//
+// # General classes of functions and types
+//
+//   - 'As' prefixed function convert values into initialized distributable types. Used for Combiners, SideInputs, and some States.
+//   - (Considering)`Then` prefixed functions are for pipeline construction.
 package beam

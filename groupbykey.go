@@ -20,11 +20,15 @@ import (
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 )
 
+// Key is an [Element] that is also [comparable]. Distinct keys must have distinct
+// binary encodings in order for runners to distinguish them.
+// TODO, rename to Key.
 type Keys interface {
 	comparable
+	Element
 }
 
-// GBK produces an output PCollection of grouped values.
+// GBK produces an output PCollection of values grouped by key.
 func GBK[K Keys, V Element](s *Scope, input PCol[KV[K, V]], opts ...Options) PCol[KV[K, Iter[V]]] {
 	if s.g.consumers == nil {
 		s.g.consumers = map[nodeIndex][]edgeIndex{}

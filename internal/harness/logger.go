@@ -153,7 +153,6 @@ func (h *loggingHandler) addAttr(groups []string, data *structpb.Struct, a slog.
 			cur.Fields[a.Key] = sv
 		}
 	}
-	return
 }
 
 func slogValue2StructValue(v slog.Value) *structpb.Value {

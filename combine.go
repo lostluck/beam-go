@@ -49,41 +49,50 @@ type InputAdder[A, I Element] interface {
 	AccumulatorMerger[A]
 }
 
+// OutputExtractor is an interface to allow combiners to incorporate an output type.
 type OutputExtractor[A, O Element] interface {
 	AccumulatorMerger[A]
 	ExtractOutput(A) O
 }
 
+// FullCombiner is an interface to allow combiners to have distinct input, accumulator, and output types.
 type FullCombiner[A, I, O Element] interface {
 	InputAdder[A, I]
 	AccumulatorMerger[A]
 	OutputExtractor[A, O]
 }
 
-// Combiners represent an optimizable approach to aggregating, by breaking down
-// the aggregation into 3 component types.
+// Combiner represent an optimizable approach to aggregating, by breaking down
+// the aggregation into 3 component types, and an implementation type that must
+// be an [AccumulatorMerger].
+//
+// Combiners may have distinct Accumulator [A], Input [I], Output [O]
 type Combiner[A, I, O Element, AM AccumulatorMerger[A]] struct {
 	// By having the AccumulatorMerger as part of the Combiner type, we get
-	// simpler registration/serialization of
+	// simpler registration/serialization of the type itself.
 	am AM
 }
 
-// SimpleMerge produces a Combiner from an AccumulatorMerger.
+// SimpleMerge produces a Combiner from an [AccumulatorMerger].
+// TODO rename to AsSimpleMerge.
 func SimpleMerge[A Element, AM AccumulatorMerger[A]](c AM) Combiner[A, A, A, AM] {
 	return Combiner[A, A, A, AM]{am: c}
 }
 
-// AddMerge produces a Combiner from an InputAdder.
+// AddMerge produces a Combiner from an [InputAdder].
+// TODO rename to AsAddMerge.
 func AddMerge[A, I Element, IA InputAdder[A, I]](c IA) Combiner[A, I, A, IA] {
 	return Combiner[A, I, A, IA]{am: c}
 }
 
-// MergeExtract produces a Combiner from an OutputExtractor.
+// MergeExtract produces a Combiner from an [OutputExtractor].
+// TODO rename to AsMergeExtract.
 func MergeExtract[A, O Element, OE OutputExtractor[A, O]](c OE) Combiner[A, A, O, OE] {
 	return Combiner[A, A, O, OE]{am: c}
 }
 
-// MergeExtract produces a Combiner from a FullCombiner.
+// FullCombine produces a Combiner from a [FullCombiner].
+// TODO rename to AsFullCombine.
 func FullCombine[A, I, O Element, C FullCombiner[A, I, O]](c C) Combiner[A, I, O, C] {
 	return Combiner[A, I, O, C]{am: c}
 }
@@ -91,6 +100,8 @@ func FullCombine[A, I, O Element, C FullCombiner[A, I, O]](c C) Combiner[A, I, O
 // We can't simply make these methods on Combiner because PerKey needs an additional
 // type for the key. It would be awkward to just have Globally as a method.
 
+// CombinePerKey uses a [Combiner] to transform and combine elements with the
+// same key, per window.
 func CombinePerKey[K Keys, A, I, O Element, AM AccumulatorMerger[A]](s *Scope, input PCol[KV[K, I]], comb Combiner[A, I, O, AM]) PCol[KV[K, O]] {
 	edgeID := s.g.curEdgeIndex()
 	nodeID := s.g.curNodeIndex()

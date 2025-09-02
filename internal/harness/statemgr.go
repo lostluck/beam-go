@@ -34,8 +34,10 @@ import (
 type writeTypeEnum int32
 
 const (
+	// StateWriteAppend produces a writer that will append data to the runner state store.
 	StateWriteAppend writeTypeEnum = 0
-	StateWriteClear  writeTypeEnum = 1
+	// StateWriteClear produces a writer that always sends a clear signal when called.
+	StateWriteClear writeTypeEnum = 1
 )
 
 // ScopedStateManager scopes the global gRPC state manager to a single instruction
