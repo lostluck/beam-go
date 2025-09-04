@@ -85,6 +85,10 @@ func (si *SideInputIter[E]) All(ec ElmC) iter.Seq[E] {
 
 func iterClosure[E Element](r harness.NextBuffer) iter.Seq[E] {
 	c := MakeCoder[E]()
+	return iterClosureWithCoder(c, r)
+}
+
+func iterClosureWithCoder[E Element](c coders.Coder[E], r harness.NextBuffer) iter.Seq[E] {
 	return func(perElm func(elm E) bool) {
 
 		defer r.Close()
