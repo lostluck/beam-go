@@ -67,6 +67,7 @@ type elmContext struct {
 	eventTime time.Time
 	windows   []coders.GWC
 	pane      coders.PaneInfo
+	keyBytes  []byte
 }
 
 // Process is what the user calls to handle the bundle of elements.
@@ -277,7 +278,7 @@ func (c *DFC[E]) split(desired *fnpb.ProcessBundleSplitRequest_DesiredSplit) *fn
 		// In a sub-element split, newSplit is currIdx, so we need to increment it, so we don't pre-maturely channel split.
 		firstResidual = suggestedSplit + 1
 		lastPrimary = suggestedSplit - 1
-		if sr.PS != nil && len(sr.PS) > 0 && sr.RS != nil && len(sr.RS) > 0 {
+		if len(sr.PS) > 0 && len(sr.RS) > 0 {
 			splitSuccess = true
 			pRoots = make([]*fnpb.BundleApplication, len(sr.PS))
 			for i, p := range sr.PS {

@@ -202,6 +202,10 @@ func (g *graph) build(ctx context.Context, dataCon harness.DataContext) ([]proce
 			if sdf, ok := dofn.(procSizedElmAndRestIface); ok {
 				userDoFn = sdf.getUserTransform()
 			}
+			// If this is a stateful transform, extract the user transform for initialization.
+			if ke, ok := e.(keyedEdge); ok {
+				userDoFn = ke.initializeDoFn(ctx, dataCon, g.stateUrl)
+			}
 
 			// Handle convenience wrappers for closures.
 			if lwi, ok := userDoFn.(lightweightIniter); ok {
@@ -252,6 +256,7 @@ func (g *graph) build(ctx context.Context, dataCon harness.DataContext) ([]proce
 				addConsumers(proc, nodeID)
 			}
 
+			// Initialize metrics and other fields.
 			rt := rv.Type()
 			for i := 0; i < rv.NumField(); i++ {
 				// Only deal with exported fields.

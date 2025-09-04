@@ -75,11 +75,11 @@ func (emt *PCol[E]) setPColKey(global nodeIndex, id int, coder any) *pcollection
 	return emt.mets
 }
 
-func (_ *PCol[E]) newDFC(id nodeIndex) processor {
+func (emt *PCol[E]) newDFC(id nodeIndex) processor {
 	return &DFC[E]{id: id}
 }
 
-func (_ *PCol[E]) newNode(protoID string, global nodeIndex, parent edgeIndex, bounded bool) node {
+func (emt *PCol[E]) newNode(protoID string, global nodeIndex, parent edgeIndex, bounded bool) node {
 	return &typedNode[E]{id: protoID, index: global, parentEdge: parent, isBounded: bounded}
 }
 
@@ -176,6 +176,7 @@ type bundleFinalizer interface {
 	regBundleFinalizer(finalizeBundle func() error)
 }
 
+// Do registers a func to call after the bundle has been durably committed.
 func (*AfterBundle) Do(dfc bundleFinalizer, finalizeBundle func() error) {
 	dfc.regBundleFinalizer(finalizeBundle)
 }
@@ -323,7 +324,7 @@ type sdfHandler interface {
 	addRestrictionCoder(intern map[string]string, coders map[string]*pipepb.Coder) string
 	pairWithRestriction() any
 	splitAndSizeRestriction() any
-	processSizedElementAndRestriction(userDoFn any, coders map[string]*pipepb.Coder, restrictionCoderID, tid, inputID string) any
+	processSizedElementAndRestriction(userDoFn any, coders map[string]*pipepb.Coder, elementCoderID, tid, inputID string) any
 }
 
 var (
@@ -338,22 +339,21 @@ var (
 // State and Timers //
 //////////////////////
 
-type state struct{ beamMixin }
-
-func (state) state() {}
-
-type StateBag[E Element] struct{ state }
-type StateValue[E Element] struct{ state }
-type StateCombining[E Element] struct{ state }
-type StateMap[K, V Element] struct{ state }
-type StateSet[E Element] struct{ state }
-
 type timer struct{ beamMixin }
 
-func (timer) timer() {}
+func (timer) timerIface() {}
+
+type timerIface interface {
+	timerIface()
+}
 
 type TimerEvent struct{ timer }
 type TimerProcessing struct{ timer }
+
+var (
+	_ timerIface = (*TimerEvent)(nil)
+	_ timerIface = (*TimerProcessing)(nil)
+)
 
 // what else am I missing?
 //

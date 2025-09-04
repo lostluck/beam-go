@@ -94,6 +94,15 @@ func (g *graph) deferDoFn(dofn any, input nodeIndex, global edgeIndex) (ins, out
 					panic(fmt.Sprintf("DoFn %v may only have one SDF handler, but has %v and now %v at %v", rt, extras.sdf, feature, fv))
 				}
 				extras.sdf = feature
+
+			case stateIface:
+				if extras == nil {
+					extras = &dofnExtras{}
+				}
+				if extras.states == nil {
+					extras.states = map[string]stateIface{}
+				}
+				extras.states[sf.Name] = feature
 			}
 		case reflect.Chan:
 			panic(fmt.Sprintf("field %v is a channel", fv))
@@ -106,7 +115,8 @@ func (g *graph) deferDoFn(dofn any, input nodeIndex, global edgeIndex) (ins, out
 }
 
 type dofnExtras struct {
-	sdf sdfHandler
+	sdf    sdfHandler
+	states map[string]stateIface
 }
 
 func (x *dofnExtras) SDF() sdfHandler {
@@ -137,8 +147,9 @@ type edgeDoFn[E Element] struct {
 	transform string
 
 	dofn       Transform[E]
-	ins, outs  map[string]nodeIndex // local field names to global collection ids.
-	sides      map[string]string    // local id to access pattern URN
+	ins, outs  map[string]nodeIndex  // local field names to global collection ids.
+	sides      map[string]string     // local id to side input access pattern URN
+	states     map[string]stateIface // local id to state access pattern URN, this edgeDoFn must be wrapped with edgeKeyedDoFn.
 	parallelIn nodeIndex
 	sdf        sdfHandler
 
@@ -213,12 +224,21 @@ func (e *edgeDoFn[E]) toProtoParts(params translateParams) (spec *pipepb.Functio
 		}
 	}
 
+	var sts map[string]*pipepb.StateSpec
+	if len(e.states) > 0 {
+		sts = map[string]*pipepb.StateSpec{}
+		for local, st := range e.states {
+			sts[local] = st.toProtoParts(params)
+		}
+	}
+
 	payloadProto := &pipepb.ParDoPayload{
 		DoFn: &pipepb.FunctionSpec{
 			Urn:     "beam:go:transform:dofn:v2",
 			Payload: wrappedPayload,
 		},
 		SideInputs: sis,
+		StateSpecs: sts,
 	}
 
 	if e.sdf != nil {
@@ -256,9 +276,9 @@ func (e *edgeDoFn[E]) transformID() string {
 	return e.transform
 }
 
-func (n *edgeDoFn[E]) addCoder(intern map[string]string, coders map[string]*pipepb.Coder) string {
-	if n.sdf != nil {
-		return n.sdf.addRestrictionCoder(intern, coders)
+func (e *edgeDoFn[E]) addCoder(intern map[string]string, coders map[string]*pipepb.Coder) string {
+	if e.sdf != nil {
+		return e.sdf.addRestrictionCoder(intern, coders)
 	}
 	return ""
 }

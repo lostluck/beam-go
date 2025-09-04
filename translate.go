@@ -34,6 +34,16 @@ import (
 	"lostluck.dev/beam-go/internal/pipelinex"
 )
 
+// The result of translate should be a graph with all the
+// static information. We should be able to "cheaply" initialize
+// DoFns and similar from the result.
+
+// DofnWrap is a convenience handler for encoding DoFns in JSON for use with
+// [pipepb.ParDoPayload] submission to, and receipt from the runner.
+//
+// To handle the asymetric needs of pipeline submission and worker-side
+// materialization, there are unexported, and unencoded fields, to handle more
+// complex DoFns.
 type dofnWrap struct {
 	TypeName    string
 	SDFTypeName string // for SDFs and other uses
@@ -41,7 +51,17 @@ type dofnWrap struct {
 
 	// The following fields must not be encoded, and instead
 	// only be used for execution time feature passing.
-	restrictionCoder string
+
+	// TODO Should side inputs be included here?
+
+	needsFinalization bool
+
+	restrictionCoderID string // SDFs
+
+	// Stateful DoFns.
+	states                map[string]*pipepb.StateSpec
+	timers                map[string]*pipepb.TimerFamilySpec
+	onWindowExpiryTimerID string
 }
 
 func jsonDoFnMarshallers() json.Options {
@@ -509,6 +529,13 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 			switch spec.GetUrn() {
 			case "beam:transform:pardo:v1":
 				decodeDoFn(spec.GetPayload(), &wrap, typeReg, tid)
+
+				if stfl, ok := wrap.DoFn.(stateful); ok {
+					userDoFn = stfl.getUserTransform()
+					if len(wrap.states) == 0 {
+						panic(fmt.Sprintf("decoded stateful, no states: %v", wrap))
+					}
+				}
 			case "beam:transform:sdf_pair_with_restriction:v1":
 				decodeDoFn(spec.GetPayload(), &wrap, typeReg, tid)
 				// Extract interesting transform here, like the SDF handler.
@@ -528,7 +555,7 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 				// Get the input coder for split encoding.
 				onlyInputID := maps.Values(pt.GetInputs())[0]
 				coderID := pbd.GetPcollections()[onlyInputID].GetCoderId()
-				wrap.DoFn = sdfH.processSizedElementAndRestriction(wrap.DoFn, pbd.GetCoders(), coderID, tid, coderID)
+				wrap.DoFn = sdfH.processSizedElementAndRestriction(wrap.DoFn, pbd.GetCoders(), coderID, tid, onlyInputID)
 			case "beam:transform:combine_per_key_precombine:v1":
 				decodeCombineFn(spec.GetPayload(), &wrap, typeReg, tid)
 				cmb := wrap.DoFn.(combiner)
@@ -590,7 +617,16 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 				Name: tid,
 			}
 
-			g.edges = append(g.edges, proc.produceDoFnEdge(tid, edgeID, wrap.DoFn, ins, outs, opt))
+			newEdge := proc.produceDoFnEdge(tid, edgeID, wrap.DoFn, ins, outs, opt)
+			if stfl, ok := wrap.DoFn.(stateful); ok {
+				// TODO support side inputs in stateful DoFns.
+				onlyInputID := maps.Values(pt.GetInputs())[0]
+				coderID := pbd.GetPcollections()[onlyInputID].GetCoderId()
+
+				newEdge = stfl.keyed(newEdge, &wrap, pbd.GetCoders(), coderID)
+			}
+
+			g.edges = append(g.edges, newEdge)
 		default:
 			panic(fmt.Sprintf("translate failed: unknown urn: %q", spec.GetUrn()))
 		}
@@ -714,30 +750,32 @@ func decodeDoFn(payload []byte, wrap *dofnWrap, typeReg map[string]reflect.Type,
 	if err := proto.Unmarshal(payload, &dofnPayload); err != nil {
 		panic(err)
 	}
+	fmt.Printf("\n\n Name: %v ParDo PAYLOAD:%v \n\n\n", name, &dofnPayload)
 	dofnSpec := dofnPayload.GetDoFn()
 
 	if dofnSpec.GetUrn() != "beam:go:transform:dofn:v2" {
 		panic(fmt.Sprintf("unknown pardo urn in transform %q: urn %q\n", name, dofnSpec.GetUrn()))
 	}
 
-	if dofnPayload.GetRequestsFinalization() {
-		panic(fmt.Sprintf("Bundle Finalization isn't yet supported, required by DoFn: %q", name))
+	if err := json.Unmarshal(dofnSpec.GetPayload(), &wrap, json.DefaultOptionsV2(), jsonDoFnUnmarshallers(typeReg, name)); err != nil {
+		panic(err)
 	}
 
-	if len(dofnPayload.GetStateSpecs())+len(dofnPayload.GetTimerFamilySpecs()) > 0 {
-		panic(fmt.Sprintf("State and Timers aren't yet supported, required by DoFn: %q", name))
+	wrap.needsFinalization = dofnPayload.GetRequestsFinalization()
+
+	if len(dofnPayload.GetStateSpecs()) > 0 {
+		wrap.states = dofnPayload.GetStateSpecs()
+	}
+	if len(dofnPayload.GetTimerFamilySpecs()) > 0 {
+		wrap.timers = dofnPayload.GetTimerFamilySpecs()
 	}
 
 	if dofnPayload.GetOnWindowExpirationTimerFamilySpec() != "" {
-		panic(fmt.Sprintf("OnWindowExpiration isn't yet supported, required by DoFn: %q", name))
+		wrap.onWindowExpiryTimerID = dofnPayload.GetOnWindowExpirationTimerFamilySpec()
 	}
 
 	if dofnPayload.GetRestrictionCoderId() != "" {
-		wrap.restrictionCoder = dofnPayload.GetRestrictionCoderId()
-	}
-
-	if err := json.Unmarshal(dofnSpec.GetPayload(), &wrap, json.DefaultOptionsV2(), jsonDoFnUnmarshallers(typeReg, name)); err != nil {
-		panic(err)
+		wrap.restrictionCoderID = dofnPayload.GetRestrictionCoderId()
 	}
 }
 
