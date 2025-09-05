@@ -105,39 +105,25 @@ func (st *StateBag[E]) initialize(ctx context.Context, dataCon harness.DataConte
 }
 
 func (st *StateBag[E]) Append(ec ElmC, val E) {
-	if st == nil {
-		panic("StateBag somehow nil")
-	}
-	if st.initBagAppender == nil {
-		panic("StateBag.initBagAppender somehow nil")
-	}
-	winData := coders.NewEncoder()
-	win := ec.windows[0]
-	win.Encode(winData)
-	w := st.initBagAppender(ec.keyBytes, winData.Data())
+	w := st.initBagAppender(ec.keyBytes, ec.winBytes)
 
 	vData := coders.NewEncoder()
 	st.coder.Encode(vData, val)
+
 	if _, err := w.Write(vData.Data()); err != nil {
 		panic(fmt.Sprintf("error on StateBag.Append: %v", err))
 	}
 }
 
 func (st *StateBag[E]) Clear(ec ElmC) {
-	winData := coders.NewEncoder()
-	win := ec.windows[0]
-	win.Encode(winData)
-	c := st.initBagClearer(ec.keyBytes, winData.Data())
+	c := st.initBagClearer(ec.keyBytes, ec.winBytes)
 	if _, err := c.Write(nil); err != nil {
 		panic(fmt.Sprintf("error on StateBag.Clear: %v", err))
 	}
 }
 
 func (st *StateBag[E]) Read(ec ElmC) iter.Seq[E] {
-	winData := coders.NewEncoder()
-	win := ec.windows[0]
-	win.Encode(winData)
-	r := st.initBagReader(ec.keyBytes, winData.Data())
+	r := st.initBagReader(ec.keyBytes, ec.winBytes)
 	return iterClosureWithCoder(st.coder, r)
 }
 
@@ -146,6 +132,10 @@ func (st *StateBag[E]) Read(ec ElmC) iter.Seq[E] {
 type StateValue[E Element] struct {
 	state
 	coder coders.Coder[E]
+
+	initBagReader   func(key, win []byte) harness.NextBuffer
+	initBagAppender func(key, win []byte) io.Writer
+	initBagClearer  func(key, win []byte) io.Writer
 }
 
 var _ stateIface = (*StateValue[int])(nil)
@@ -167,7 +157,80 @@ func (st *StateValue[E]) toProtoParts(params translateParams) *pipepb.StateSpec 
 func (st *StateValue[E]) initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
 	coderID := spec.GetReadModifyWriteSpec().GetCoderId()
 	st.coder = coderFromProto[E](coders, coderID)
-	panic("unimplemented")
+
+	keyPBFn := func(key, win []byte) *fnpb.StateKey {
+		return &fnpb.StateKey{
+			Type: &fnpb.StateKey_BagUserState_{
+				BagUserState: &fnpb.StateKey_BagUserState{
+					TransformId: transformID,
+					UserStateId: stateID,
+					Key:         key,
+					Window:      win,
+				},
+			},
+		}
+	}
+	st.initBagReader = func(key, win []byte) harness.NextBuffer {
+		keyPb := keyPBFn(key, win)
+		// 50/50 on putting this on processor directly instead??
+		r, err := dataCon.State.OpenReader(ctx, url, keyPb)
+		if err != nil {
+			panic(err)
+		}
+		return r
+	}
+	st.initBagAppender = func(key, win []byte) io.Writer {
+		keyPb := keyPBFn(key, win)
+		w, err := dataCon.State.OpenWriter(ctx, url, keyPb, harness.StateWriteAppend)
+		if err != nil {
+			panic(err)
+		}
+		return w
+	}
+	st.initBagClearer = func(key, win []byte) io.Writer {
+		keyPb := keyPBFn(key, win)
+		w, err := dataCon.State.OpenWriter(ctx, url, keyPb, harness.StateWriteClear)
+		if err != nil {
+			panic(err)
+		}
+		return w
+	}
+}
+
+func (st *StateValue[E]) Set(ec ElmC, val E) {
+	w := st.initBagAppender(ec.keyBytes, ec.winBytes)
+	c := st.initBagClearer(ec.keyBytes, ec.winBytes)
+
+	vData := coders.NewEncoder()
+	st.coder.Encode(vData, val)
+	// Clear, then re-write.
+	c.Write(nil)
+
+	if _, err := w.Write(vData.Data()); err != nil {
+		panic(fmt.Sprintf("error on StateBag.Append: %v", err))
+	}
+}
+
+func (st *StateValue[E]) Clear(ec ElmC) {
+	c := st.initBagClearer(ec.keyBytes, ec.winBytes)
+	if _, err := c.Write(nil); err != nil {
+		panic(fmt.Sprintf("error on StateBag.Clear: %v", err))
+	}
+}
+
+func (st *StateValue[E]) Read(ec ElmC) (E, bool) {
+	r := st.initBagReader(ec.keyBytes, ec.winBytes)
+	defer r.Close()
+	buf, err := r.NextBuf()
+	if err != nil {
+		panic(err)
+	}
+	dec := coders.NewDecoder(buf)
+	if dec.Empty() {
+		var zero E
+		return zero, false
+	}
+	return st.coder.Decode(dec), true
 }
 
 // AsStateCombining uses a [Combiner] to produce

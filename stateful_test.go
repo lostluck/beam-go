@@ -2,6 +2,7 @@ package beam_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"lostluck.dev/beam-go"
@@ -52,12 +53,54 @@ func (df *StateBagDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
 }
 
 func TestStatefulParDo_BlindBagWrites(t *testing.T) {
-
 	expected := []beam.KV[int, int]{{1, 1}, {1, 3}, {1, 6}, {1, 4}, {1, 9}, {2, 1}, {2, 4}}
 
 	pr, err := beam.LaunchAndWait(context.TODO(), func(s *beam.Scope) error {
 		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
 		bagged := beam.StatefulParDo(s, input, &StateBagDoFn{})
+		beam.ParDo(s, bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("LaunchAndWait produced an error: %v", err)
+	}
+	if got, want := pr.Counters["sink.Hit"], int64(len(expected)); got != want {
+		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
+	}
+	if got, want := pr.Counters["sink.Miss"], int64(0); got != want {
+		t.Errorf("sink.Miss didn't match bench number: got %v want %v", got, want)
+	}
+}
+
+type StateValueDoFn struct {
+	MyValue beam.StateValue[int]
+
+	Output beam.PCol[beam.KV[int, int]]
+}
+
+func (df *StateValueDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
+	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
+		val, exists := df.MyValue.Read(ec)
+		if !exists && val != 0 {
+			return fmt.Errorf("Unset State MyValue has non-zero value")
+		}
+		sum := val + k.Value
+		df.MyValue.Set(ec, sum)
+
+		df.Output.Emit(ec, beam.Pair(k.Key, sum))
+		if sum >= 10 {
+			df.MyValue.Clear(ec)
+		}
+		return nil
+	})
+}
+
+func TestStatefulParDo_Value(t *testing.T) {
+	expected := []beam.KV[int, int]{{1, 1}, {1, 3}, {1, 6}, {1, 10}, {1, 5}, {2, 1}, {2, 4}}
+
+	pr, err := beam.LaunchAndWait(context.TODO(), func(s *beam.Scope) error {
+		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
+		bagged := beam.StatefulParDo(s, input, &StateValueDoFn{})
 		beam.ParDo(s, bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))

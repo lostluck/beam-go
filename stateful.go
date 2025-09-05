@@ -160,8 +160,10 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 	// so that we can pass the encoded key context down to the user side.
 	userPerElm := dfc.perElm
 
-	// TODO, replace with getCoderFromProto
+	// TODO: replace with a transaction handling per key/window.
 	memoKeys := map[K][]byte{}
+	memoWins := map[coders.GWC][]byte{}
+
 	dfc.perElm = func(ec ElmC, e KV[K, V]) error {
 		kb, exists := memoKeys[e.Key]
 		if !exists {
@@ -170,7 +172,21 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 			kb = enc.Data()
 			memoKeys[e.Key] = kb
 		}
+
+		if len(ec.windows) > 1 {
+			panic("multiple windows, in single window context")
+		}
+
+		wb, exists := memoWins[ec.windows[0]]
+		if !exists {
+			enc := coders.NewEncoder()
+			fn.keyCoder.Encode(enc, e.Key)
+			kb = enc.Data()
+			memoKeys[e.Key] = kb
+		}
+
 		ec.keyBytes = kb
+		ec.winBytes = wb
 		return userPerElm(ec, e)
 	}
 	return nil
