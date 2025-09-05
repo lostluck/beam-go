@@ -750,7 +750,6 @@ func decodeDoFn(payload []byte, wrap *dofnWrap, typeReg map[string]reflect.Type,
 	if err := proto.Unmarshal(payload, &dofnPayload); err != nil {
 		panic(err)
 	}
-	fmt.Printf("\n\n Name: %v ParDo PAYLOAD:%v \n\n\n", name, &dofnPayload)
 	dofnSpec := dofnPayload.GetDoFn()
 
 	if dofnSpec.GetUrn() != "beam:go:transform:dofn:v2" {
