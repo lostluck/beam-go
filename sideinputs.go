@@ -18,7 +18,6 @@ package beam
 import (
 	"context"
 	"fmt"
-	"io"
 	"iter"
 
 	"lostluck.dev/beam-go/coders"
@@ -81,33 +80,6 @@ func (si *SideInputIter[E]) All(ec ElmC) iter.Seq[E] {
 	w.Encode(enc)
 	r := si.initIterReader(enc.Data())
 	return iterClosure[E](r)
-}
-
-func iterClosure[E Element](r harness.NextBuffer) iter.Seq[E] {
-	c := MakeCoder[E]()
-	return iterClosureWithCoder(c, r)
-}
-
-func iterClosureWithCoder[E Element](c coders.Coder[E], r harness.NextBuffer) iter.Seq[E] {
-	return func(perElm func(elm E) bool) {
-
-		defer r.Close()
-		for {
-			buf, err := r.NextBuf()
-			if err != nil {
-				if err == io.EOF {
-					return
-				}
-				panic(err)
-			}
-			dec := coders.NewDecoder(buf)
-			for !dec.Empty() {
-				if !perElm(c.Decode(dec)) {
-					return
-				}
-			}
-		}
-	}
 }
 
 func validateSideInput[E any](emt PCol[E]) {

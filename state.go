@@ -2,10 +2,11 @@ package beam
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"iter"
+	"maps"
 	"reflect"
+	"slices"
 
 	"github.com/go-json-experiment/json"
 	"lostluck.dev/beam-go/coders"
@@ -15,14 +16,17 @@ import (
 )
 
 // State in Beam is associated with a window, and a key, and a DoFn.
+// This file defines the different kinds of state that Beam can maintain.
 
 // state is a zero sized mixin to be embedded into valid state types as fields.
 type state struct{ beamMixin }
 
-func (state) isState() {}
+func (state) isState()       {}
+func (state) persist() error { panic("persist unimplemented") }
 
 type stateIface interface {
 	isState()
+	persist() error
 	toProtoParts(params translateParams) *pipepb.StateSpec
 	initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder)
 }
@@ -31,6 +35,101 @@ const (
 	urnBagUserState      = "beam:user_state:bag:v1"
 	urnMultiMapUserState = "beam:user_state:multimap:v1"
 )
+
+type (
+	// In an ideal world, we'd have a single place where we know the state type
+	// and the Key, the Window, and the *state's* element type statically.
+	// Unfortunately, we do not, as the state fields are ultimately disassociated
+	// with the wrapper DoFn's types, and it would be inconvenient to users to
+	// force it otherwise.
+	//
+	// So, the choice is between typed Keys and windows, and Typed elements.
+	//
+	// We will go with typed elements for the reason that they are likely more expensive
+	// to always encode/decode (especially for the multi-value states), while
+	// we will almost always need the key and window encodings.
+	//
+	// This means each state needs it's own K+W cache cells, and we need to pass
+	// this information down to the states via the ElmC.
+	stateCacheKey struct {
+		k, w string
+		// TODO change window value to the true window type?
+	}
+
+	// stateCacheEntry represents the consolidated view of the cache and whether
+	// anything has been loaded from the runner.
+	//
+	// This is because we must avoid duplicating values in multi-value states,
+	// but also strive for efficiency in StateAPI calls.
+	// fresh is the values that have been produced during this bundle invocation.
+	// The marker values track what might need doing on bundle finish for writing
+	// to the state efficiently.
+	//
+	// Initial state is that there is no state, and everything is zeroed.
+	//
+	// Marker Booleans
+	//
+	// valid indicates that this entry has been written to in this bundle, and
+	// it contains real values.
+	//
+	// dirty indicates that the fresh value is valid. This will often be
+	// returned with a user read call, disjuncted with loaded as needed.
+	//
+	// loaded indicates that the runner field is valid, and that we have already
+	// read the state value from the runner.
+	//
+	// cleared indicates that the state was cleared at least once, and thus
+	// we must clear the state runner side, before sending the fresh value over.
+	//
+	// We could probably simplify some of this book keeping by always sending
+	// a clear before appending, but that would be a problem for larger, more
+	// expensive to encode values.
+	stateCacheEntry[V any] struct {
+		fresh, runner                 V
+		valid, dirty, loaded, cleared bool
+	}
+
+	// stateCache handles per bundle state within a state cell.
+	stateCache[V any] struct {
+		cache map[stateCacheKey]stateCacheEntry[V]
+	}
+)
+
+func newStateCache[V any]() *stateCache[V] {
+	return &stateCache[V]{
+		cache: map[stateCacheKey]stateCacheEntry[V]{},
+	}
+}
+
+// Get returns the cached state, and the valid bit, and exists bit.
+//
+// The valid bit is whether the state has been cleared.
+// and that the value must be persisted to the runner eventually.
+//
+// A false exists, means there's no work to be done for this KV pair.
+func (sc *stateCache[V]) Get(k, w string) stateCacheEntry[V] {
+	return sc.cache[stateCacheKey{k, w}]
+}
+
+// Put replaces the state in the cache, and sets the valid bit to true.
+func (sc *stateCache[V]) Put(k, w string, entry stateCacheEntry[V]) {
+	entry.valid = true
+	sc.cache[stateCacheKey{k, w}] = entry
+}
+
+// Clear zeroes the state in the cache, and sets the valid bit to false, and
+// the cleared bit to true.
+func (sc *stateCache[V]) Clear(k, w string) {
+	sc.cache[stateCacheKey{k, w}] = stateCacheEntry[V]{valid: false, dirty: true, cleared: true}
+}
+
+// Iter provides iteration through the cache, but also clears the cache immeadiately.
+// Intended for permitting a final dumping/reading of the state for persistence
+// at the end of the bundle.
+func (sc *stateCache[V]) Iter() iter.Seq2[stateCacheKey, stateCacheEntry[V]] {
+	defer func() { sc.cache = map[stateCacheKey]stateCacheEntry[V]{} }()
+	return maps.All(sc.cache)
+}
 
 // StateBag represents an unordered collection of state associated with the
 // embedded DoFn, the element's window, and a key.
@@ -41,6 +140,8 @@ type StateBag[E Element] struct {
 	initBagAppender func(key, win []byte) io.Writer
 	initBagClearer  func(key, win []byte) io.Writer
 	coder           coders.Coder[E]
+
+	cache *stateCache[[]E]
 }
 
 var _ stateIface = (*StateBag[int])(nil)
@@ -101,30 +202,59 @@ func (st *StateBag[E]) initialize(ctx context.Context, dataCon harness.DataConte
 		return w
 	}
 
-	// TODO: Track state transactions instead for consolidating on finishing bundle.
+	st.cache = newStateCache[[]E]()
+}
+
+func (st *StateBag[E]) persist() error {
+	for key, entry := range st.cache.Iter() {
+		if !entry.valid {
+			continue
+		}
+
+		if entry.cleared {
+			c := st.initBagClearer([]byte(key.k), []byte(key.w))
+			c.Write(nil)
+		}
+
+		// We only ever need to write the fresh values for the bag.
+		w := st.initBagAppender([]byte(key.k), []byte(key.w))
+		enc := coders.NewEncoder()
+		for _, v := range entry.fresh {
+			st.coder.Encode(enc, v)
+		}
+		if _, err := w.Write(enc.Data()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (st *StateBag[E]) Append(ec ElmC, val E) {
-	w := st.initBagAppender(ec.keyBytes, ec.winBytes)
-
-	vData := coders.NewEncoder()
-	st.coder.Encode(vData, val)
-
-	if _, err := w.Write(vData.Data()); err != nil {
-		panic(fmt.Sprintf("error on StateBag.Append: %v", err))
-	}
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	entry.fresh = append(entry.fresh, val)
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
 }
 
 func (st *StateBag[E]) Clear(ec ElmC) {
-	c := st.initBagClearer(ec.keyBytes, ec.winBytes)
-	if _, err := c.Write(nil); err != nil {
-		panic(fmt.Sprintf("error on StateBag.Clear: %v", err))
-	}
+	st.cache.Clear(ec.keyBytes, ec.winBytes)
 }
 
 func (st *StateBag[E]) Read(ec ElmC) iter.Seq[E] {
-	r := st.initBagReader(ec.keyBytes, ec.winBytes)
-	return iterClosureWithCoder(st.coder, r)
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if !entry.valid {
+		// We have no local elements, so just return the iterator immeadiately.
+		r := st.initBagReader([]byte(ec.keyBytes), []byte(ec.winBytes))
+		iter := iterClosureWithCoder(st.coder, r)
+
+		// TODO: Do smarter handling for large amounts of state.
+		for val := range iter {
+			entry.runner = append(entry.runner, val)
+		}
+		entry.loaded = true
+		st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+		return slices.Values(entry.runner)
+	}
+	return concat(slices.Values(entry.runner), slices.Values(entry.fresh))
 }
 
 // StateValue represents a single value of state associated with the
@@ -136,6 +266,8 @@ type StateValue[E Element] struct {
 	initBagReader   func(key, win []byte) harness.NextBuffer
 	initBagAppender func(key, win []byte) io.Writer
 	initBagClearer  func(key, win []byte) io.Writer
+
+	cache *stateCache[E]
 }
 
 var _ stateIface = (*StateValue[int])(nil)
@@ -195,42 +327,60 @@ func (st *StateValue[E]) initialize(ctx context.Context, dataCon harness.DataCon
 		}
 		return w
 	}
+
+	st.cache = newStateCache[E]()
+}
+
+func (st *StateValue[E]) persist() error {
+	for key, entry := range st.cache.Iter() {
+		if !entry.valid {
+			continue
+		}
+
+		if entry.cleared {
+			c := st.initBagClearer([]byte(key.k), []byte(key.w))
+			c.Write(nil)
+		}
+
+		w := st.initBagAppender([]byte(key.k), []byte(key.w))
+		enc := coders.NewEncoder()
+		st.coder.Encode(enc, entry.fresh)
+		if _, err := w.Write(enc.Data()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (st *StateValue[E]) Set(ec ElmC, val E) {
-	w := st.initBagAppender(ec.keyBytes, ec.winBytes)
-	c := st.initBagClearer(ec.keyBytes, ec.winBytes)
-
-	vData := coders.NewEncoder()
-	st.coder.Encode(vData, val)
-	// Clear, then re-write.
-	c.Write(nil)
-
-	if _, err := w.Write(vData.Data()); err != nil {
-		panic(fmt.Sprintf("error on StateBag.Append: %v", err))
+	entry := stateCacheEntry[E]{
+		fresh:   val,
+		cleared: true, // All Sets requires clearing the runner state.
 	}
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
 }
 
 func (st *StateValue[E]) Clear(ec ElmC) {
-	c := st.initBagClearer(ec.keyBytes, ec.winBytes)
-	if _, err := c.Write(nil); err != nil {
-		panic(fmt.Sprintf("error on StateBag.Clear: %v", err))
-	}
+	st.cache.Clear(ec.keyBytes, ec.winBytes)
 }
 
 func (st *StateValue[E]) Read(ec ElmC) (E, bool) {
-	r := st.initBagReader(ec.keyBytes, ec.winBytes)
-	defer r.Close()
-	buf, err := r.NextBuf()
-	if err != nil {
-		panic(err)
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if entry.valid {
+		return entry.fresh, true
 	}
-	dec := coders.NewDecoder(buf)
-	if dec.Empty() {
-		var zero E
-		return zero, false
-	}
-	return st.coder.Decode(dec), true
+	// Nothing cached, so we must read.
+	r := st.initBagReader([]byte(ec.keyBytes), []byte(ec.winBytes))
+	iter := iterClosureWithCoder(st.coder, r)
+
+	iter(func(in E) bool {
+		entry.fresh = in
+		entry.valid = true
+		return false
+	})
+
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+	return entry.fresh, entry.valid
 }
 
 // AsStateCombining uses a [Combiner] to produce

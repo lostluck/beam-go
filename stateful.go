@@ -101,7 +101,8 @@ type hiddenKeyedStateful[T Transform[KV[K, V]], K Keys, V Element] struct {
 
 	OnBundleFinish
 
-	keyCoder coders.Coder[K]
+	keyCoder        coders.Coder[K]
+	stateInterfaces []stateIface
 }
 
 func (fn *hiddenKeyedStateful[T, K, V]) keyed(e multiEdge, wrap *dofnWrap, coders map[string]*pipepb.Coder, coderID string) multiEdge {
@@ -130,6 +131,7 @@ func (fn *hiddenKeyedStateful[T, K, V]) initialize(ctx context.Context, dataCon 
 	keyCoderID := kvCoder.GetComponentCoderIds()[0]
 	fn.keyCoder = coderFromProto[K](coders, keyCoderID)
 
+	fn.stateInterfaces = make([]stateIface, 0, len(states))
 	// Initialize states
 	for stateID, spec := range states {
 		// TODO: Also support fixed array of some states.
@@ -140,8 +142,8 @@ func (fn *hiddenKeyedStateful[T, K, V]) initialize(ctx context.Context, dataCon 
 		// TODO: COLLECT STATES HERE, so we can call them OnBundleFinish, when we move to transaction tracking
 		if st, ok := fv.Addr().Interface().(stateIface); ok {
 			st.initialize(ctx, dataCon, url, stateID, transformID, spec, coders)
+			fn.stateInterfaces = append(fn.stateInterfaces, st)
 		} else {
-
 			panic(fmt.Sprintf("unnown state field with ID %v, doesn't implement stateful for field type %v", stateID, fv.Type()))
 		}
 	}
@@ -161,15 +163,17 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 	userPerElm := dfc.perElm
 
 	// TODO: replace with a transaction handling per key/window.
-	memoKeys := map[K][]byte{}
-	memoWins := map[coders.GWC][]byte{}
+	memoKeys := map[K]string{}
+	memoWins := map[coders.GWC]string{}
+
+	// Each state needs to keep it's own cache of key+window to values.
 
 	dfc.perElm = func(ec ElmC, e KV[K, V]) error {
 		kb, exists := memoKeys[e.Key]
 		if !exists {
 			enc := coders.NewEncoder()
 			fn.keyCoder.Encode(enc, e.Key)
-			kb = enc.Data()
+			kb = string(enc.Data())
 			memoKeys[e.Key] = kb
 		}
 
@@ -181,7 +185,7 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 		if !exists {
 			enc := coders.NewEncoder()
 			fn.keyCoder.Encode(enc, e.Key)
-			kb = enc.Data()
+			kb = string(enc.Data())
 			memoKeys[e.Key] = kb
 		}
 
@@ -189,6 +193,16 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 		ec.winBytes = wb
 		return userPerElm(ec, e)
 	}
+
+	fn.OnBundleFinish.Do(dfc, func() error {
+		for _, st := range fn.stateInterfaces {
+			if err := st.persist(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
 	return nil
 }
 

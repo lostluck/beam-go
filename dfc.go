@@ -64,10 +64,12 @@ func (c *DFC[E]) transformID() string {
 }
 
 type elmContext struct {
-	eventTime          time.Time
-	windows            []coders.GWC
-	pane               coders.PaneInfo
-	keyBytes, winBytes []byte
+	eventTime time.Time
+	windows   []coders.GWC
+	pane      coders.PaneInfo
+
+	// For stateful transforms.
+	keyBytes, winBytes string
 }
 
 // Process is what the user calls to handle the bundle of elements.
