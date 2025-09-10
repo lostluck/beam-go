@@ -131,15 +131,46 @@ func (sc *stateCache[V]) Iter() iter.Seq2[stateCacheKey, stateCacheEntry[V]] {
 	return maps.All(sc.cache)
 }
 
+type stateInit struct {
+	ctx     context.Context
+	dataCon harness.DataContext
+	url     string
+	keyPBFn func(key, win []byte) *fnpb.StateKey
+}
+
+func (sti stateInit) bagReader(key, win []byte) harness.NextBuffer {
+	keyPb := sti.keyPBFn(key, win)
+	r, err := sti.dataCon.State.OpenReader(sti.ctx, sti.url, keyPb)
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+func (sti stateInit) bagAppender(key, win []byte) io.Writer {
+	keyPb := sti.keyPBFn(key, win)
+	w, err := sti.dataCon.State.OpenWriter(sti.ctx, sti.url, keyPb, harness.StateWriteAppend)
+	if err != nil {
+		panic(err)
+	}
+	return w
+}
+
+func (sti stateInit) bagClearer(key, win []byte) io.Writer {
+	keyPb := sti.keyPBFn(key, win)
+	w, err := sti.dataCon.State.OpenWriter(sti.ctx, sti.url, keyPb, harness.StateWriteClear)
+	if err != nil {
+		panic(err)
+	}
+	return w
+}
+
 // StateBag represents an unordered collection of state associated with the
 // embedded DoFn, the element's window, and a key.
 type StateBag[E Element] struct {
 	state
-
-	initBagReader   func(key, win []byte) harness.NextBuffer
-	initBagAppender func(key, win []byte) io.Writer
-	initBagClearer  func(key, win []byte) io.Writer
-	coder           coders.Coder[E]
+	init  stateInit
+	coder coders.Coder[E]
 
 	cache *stateCache[[]E]
 }
@@ -176,32 +207,12 @@ func (st *StateBag[E]) initialize(ctx context.Context, dataCon harness.DataConte
 			},
 		}
 	}
-	st.initBagReader = func(key, win []byte) harness.NextBuffer {
-		keyPb := keyPBFn(key, win)
-		// 50/50 on putting this on processor directly instead??
-		r, err := dataCon.State.OpenReader(ctx, url, keyPb)
-		if err != nil {
-			panic(err)
-		}
-		return r
+	st.init = stateInit{
+		keyPBFn: keyPBFn,
+		url:     url,
+		ctx:     ctx,
+		dataCon: dataCon,
 	}
-	st.initBagAppender = func(key, win []byte) io.Writer {
-		keyPb := keyPBFn(key, win)
-		w, err := dataCon.State.OpenWriter(ctx, url, keyPb, harness.StateWriteAppend)
-		if err != nil {
-			panic(err)
-		}
-		return w
-	}
-	st.initBagClearer = func(key, win []byte) io.Writer {
-		keyPb := keyPBFn(key, win)
-		w, err := dataCon.State.OpenWriter(ctx, url, keyPb, harness.StateWriteClear)
-		if err != nil {
-			panic(err)
-		}
-		return w
-	}
-
 	st.cache = newStateCache[[]E]()
 }
 
@@ -212,12 +223,12 @@ func (st *StateBag[E]) persist() error {
 		}
 
 		if entry.cleared {
-			c := st.initBagClearer([]byte(key.k), []byte(key.w))
+			c := st.init.bagClearer([]byte(key.k), []byte(key.w))
 			c.Write(nil)
 		}
 
 		// We only ever need to write the fresh values for the bag.
-		w := st.initBagAppender([]byte(key.k), []byte(key.w))
+		w := st.init.bagAppender([]byte(key.k), []byte(key.w))
 		enc := coders.NewEncoder()
 		for _, v := range entry.fresh {
 			st.coder.Encode(enc, v)
@@ -243,7 +254,7 @@ func (st *StateBag[E]) Read(ec ElmC) iter.Seq[E] {
 	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
 	if !entry.valid {
 		// We have no local elements, so just return the iterator immeadiately.
-		r := st.initBagReader([]byte(ec.keyBytes), []byte(ec.winBytes))
+		r := st.init.bagReader([]byte(ec.keyBytes), []byte(ec.winBytes))
 		iter := iterClosureWithCoder(st.coder, r)
 
 		// TODO: Do smarter handling for large amounts of state.
@@ -261,12 +272,10 @@ func (st *StateBag[E]) Read(ec ElmC) iter.Seq[E] {
 // embedded DoFn, the element's window, and a key.
 type StateValue[E Element] struct {
 	state
+
+	init stateInit
+
 	coder coders.Coder[E]
-
-	initBagReader   func(key, win []byte) harness.NextBuffer
-	initBagAppender func(key, win []byte) io.Writer
-	initBagClearer  func(key, win []byte) io.Writer
-
 	cache *stateCache[E]
 }
 
@@ -302,32 +311,13 @@ func (st *StateValue[E]) initialize(ctx context.Context, dataCon harness.DataCon
 			},
 		}
 	}
-	st.initBagReader = func(key, win []byte) harness.NextBuffer {
-		keyPb := keyPBFn(key, win)
-		// 50/50 on putting this on processor directly instead??
-		r, err := dataCon.State.OpenReader(ctx, url, keyPb)
-		if err != nil {
-			panic(err)
-		}
-		return r
-	}
-	st.initBagAppender = func(key, win []byte) io.Writer {
-		keyPb := keyPBFn(key, win)
-		w, err := dataCon.State.OpenWriter(ctx, url, keyPb, harness.StateWriteAppend)
-		if err != nil {
-			panic(err)
-		}
-		return w
-	}
-	st.initBagClearer = func(key, win []byte) io.Writer {
-		keyPb := keyPBFn(key, win)
-		w, err := dataCon.State.OpenWriter(ctx, url, keyPb, harness.StateWriteClear)
-		if err != nil {
-			panic(err)
-		}
-		return w
-	}
 
+	st.init = stateInit{
+		keyPBFn: keyPBFn,
+		url:     url,
+		ctx:     ctx,
+		dataCon: dataCon,
+	}
 	st.cache = newStateCache[E]()
 }
 
@@ -338,11 +328,11 @@ func (st *StateValue[E]) persist() error {
 		}
 
 		if entry.cleared {
-			c := st.initBagClearer([]byte(key.k), []byte(key.w))
+			c := st.init.bagClearer([]byte(key.k), []byte(key.w))
 			c.Write(nil)
 		}
 
-		w := st.initBagAppender([]byte(key.k), []byte(key.w))
+		w := st.init.bagAppender([]byte(key.k), []byte(key.w))
 		enc := coders.NewEncoder()
 		st.coder.Encode(enc, entry.fresh)
 		if _, err := w.Write(enc.Data()); err != nil {
@@ -370,7 +360,7 @@ func (st *StateValue[E]) Read(ec ElmC) (E, bool) {
 		return entry.fresh, true
 	}
 	// Nothing cached, so we must read.
-	r := st.initBagReader([]byte(ec.keyBytes), []byte(ec.winBytes))
+	r := st.init.bagReader([]byte(ec.keyBytes), []byte(ec.winBytes))
 	iter := iterClosureWithCoder(st.coder, r)
 
 	iter(func(in E) bool {

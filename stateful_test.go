@@ -8,6 +8,8 @@ import (
 	"lostluck.dev/beam-go"
 )
 
+// TODO: Add TestStream, so we can also validate multi-bundle handling.
+
 func TestStatefulParDo_Invalid(t *testing.T) {
 	defer func() {
 		if e := recover(); e != nil {
@@ -36,6 +38,49 @@ type StateBagDoFn struct {
 
 func (df *StateBagDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
 	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
+		iter := df.MyBag.Read(ec)
+		var sum, count int
+		for v := range iter {
+			count++
+			sum += v
+		}
+		df.Output.Emit(ec, beam.Pair(k.Key, sum))
+		if count >= 3 {
+			df.MyBag.Clear(ec)
+		}
+		df.MyBag.Append(ec, k.Value)
+		return nil
+	})
+}
+
+func TestStatefulParDo_BagWrites(t *testing.T) {
+	expected := []beam.KV[int, int]{{1, 0}, {1, 1}, {1, 3}, {1, 6}, {1, 4}, {2, 0}, {2, 1}}
+
+	pr, err := beam.LaunchAndWait(context.TODO(), func(s *beam.Scope) error {
+		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
+		bagged := beam.StatefulParDo(s, input, &StateBagDoFn{})
+		beam.ParDo(s, bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("LaunchAndWait produced an error: %v", err)
+	}
+	if got, want := pr.Counters["sink.Hit"], int64(len(expected)); got != want {
+		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
+	}
+	if got, want := pr.Counters["sink.Miss"], int64(0); got != want {
+		t.Errorf("sink.Miss didn't match bench number: got %v want %v", got, want)
+	}
+}
+
+type StateBagDoFn_Blind struct {
+	MyBag beam.StateBag[int]
+
+	Output beam.PCol[beam.KV[int, int]]
+}
+
+func (df *StateBagDoFn_Blind) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
+	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
 		df.MyBag.Append(ec, k.Value) // Blind Write.
 
 		iter := df.MyBag.Read(ec)
@@ -57,7 +102,7 @@ func TestStatefulParDo_BlindBagWrites(t *testing.T) {
 
 	pr, err := beam.LaunchAndWait(context.TODO(), func(s *beam.Scope) error {
 		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
-		bagged := beam.StatefulParDo(s, input, &StateBagDoFn{})
+		bagged := beam.StatefulParDo(s, input, &StateBagDoFn_Blind{})
 		beam.ParDo(s, bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
