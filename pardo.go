@@ -58,7 +58,7 @@ func (g *graph) deferDoFn(dofn any, input nodeIndex, global edgeIndex) (ins, out
 	}
 	sides = map[string]string{}
 	outs = map[string]nodeIndex{}
-	efaceRT := reflect.TypeOf((*emitIface)(nil)).Elem()
+	efaceRT := reflect.TypeFor[emitIface]()
 	rt := rv.Type()
 	for i := 0; i < rv.NumField(); i++ {
 		fv := rv.Field(i)

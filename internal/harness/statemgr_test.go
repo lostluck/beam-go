@@ -90,7 +90,7 @@ func TestStateChannel(t *testing.T) {
 				// This is not a real StateAPI protocol, since that's handled at a higher level than the StateChannel,
 				// but validates that the routing occurs correctly.
 				const count = 10
-				for i := 0; i < count; i++ {
+				for range count {
 					go func() {
 						req := <-client.send
 						client.recv <- &fnpb.StateResponse{
@@ -103,8 +103,8 @@ func TestStateChannel(t *testing.T) {
 						}
 					}()
 				}
-				for i := 0; i < count; i++ {
-					token := []byte(fmt.Sprintf("%d", i))
+				for i := range count {
+					token := fmt.Appendf(nil, "%d", i)
 					resp, err := c.Send(&fnpb.StateRequest{
 						Request: &fnpb.StateRequest_Get{
 							Get: &fnpb.StateGetRequest{
@@ -309,7 +309,6 @@ func TestStateKeyReader(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		test := test // avoid issues on parallel execution.
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancelFn := context.WithCancel(context.Background())
 			ch := &StateChannel{
@@ -334,7 +333,7 @@ func TestStateKeyReader(t *testing.T) {
 					if buflen >= 0 {
 						buf = bytes.Repeat([]byte{42}, buflen)
 					}
-					token := []byte(fmt.Sprint(i))
+					token := fmt.Append(nil, i)
 					if i+1 == len(test.buflens) {
 						// On the last request response pair, send no token.
 						token = nil

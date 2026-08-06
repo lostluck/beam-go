@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -54,7 +55,6 @@ func TestSplitHelper(t *testing.T) {
 			{curr: 6, size: 16, frac: 0.5, want: 11},
 		}
 		for _, test := range tests {
-			test := test
 			t.Run(fmt.Sprintf("(%v of [%v, %v])", test.frac, test.curr, test.size), func(t *testing.T) {
 				wantFrac := -1.0
 				got, gotFrac, err := splitHelper(test.curr, test.size, 0.0, nil, test.frac, false)
@@ -86,7 +86,6 @@ func TestSplitHelper(t *testing.T) {
 			{curr: 1, currProg: 0.1, size: 4, frac: 0.25, want: 2},
 		}
 		for _, test := range tests {
-			test := test
 			t.Run(fmt.Sprintf("(%v of [%v, %v])", test.frac, float64(test.curr)+test.currProg, test.size), func(t *testing.T) {
 				wantFrac := -1.0
 				got, gotFrac, err := splitHelper(test.curr, test.size, test.currProg, nil, test.frac, false)
@@ -125,7 +124,6 @@ func TestSplitHelper(t *testing.T) {
 			{curr: 5, size: 16, splits: []int64{1, 2, 3}, frac: 0.25, err: true},
 		}
 		for _, test := range tests {
-			test := test
 			t.Run(fmt.Sprintf("(%v of [%v, %v], splits = %v)", test.frac, test.curr, test.size, test.splits), func(t *testing.T) {
 				wantFrac := -1.0
 				got, gotFrac, err := splitHelper(test.curr, test.size, 0.0, test.splits, test.frac, false)
@@ -180,7 +178,6 @@ func TestSplitHelper(t *testing.T) {
 			{curr: 0, currProg: 0.4, size: 2, frac: 0.1875, want: 0, wantFrac: 0.5},
 		}
 		for _, test := range tests {
-			test := test
 			t.Run(fmt.Sprintf("(%v of [%v, %v])", test.frac, float64(test.curr)+test.currProg, test.size), func(t *testing.T) {
 				got, gotFrac, err := splitHelper(test.curr, test.size, test.currProg, nil, test.frac, true)
 				if err != nil {
@@ -216,7 +213,6 @@ func TestSplitHelper(t *testing.T) {
 			{curr: 2, currProg: 0, size: 5, frac: 0.2, splits: []int64{1, 3, 4, 5}, want: 3, wantFrac: -1.0},
 		}
 		for _, test := range tests {
-			test := test
 			t.Run(fmt.Sprintf("(%v of [%v, %v])", test.frac, float64(test.curr)+test.currProg, test.size), func(t *testing.T) {
 				got, gotFrac, err := splitHelper(test.curr, test.size, test.currProg, test.splits, test.frac, true)
 				if err != nil {
@@ -414,12 +410,7 @@ func (fn *sepHarnessBase[E]) setup() error {
 }
 
 func (fn *sepHarnessBase[E]) isSentinel(elm E) bool {
-	for _, v := range fn.Sentinels {
-		if elm == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(fn.Sentinels, elm)
 }
 
 func (fn *sepHarnessBase[E]) block() {

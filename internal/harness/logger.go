@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"runtime"
 	"slices"
 	"time"
@@ -146,9 +147,7 @@ func (h *loggingHandler) addAttr(groups []string, data *structpb.Struct, a slog.
 	if sv := slogValue2StructValue(a.Value); sv != nil {
 		if a.Value.Kind() == slog.KindGroup && a.Key == "" {
 			// Groups with empty keys are inlined into their parents.
-			for k, v := range sv.GetStructValue().Fields {
-				cur.Fields[k] = v
-			}
+			maps.Copy(cur.Fields, sv.GetStructValue().Fields)
 		} else {
 			cur.Fields[a.Key] = sv
 		}

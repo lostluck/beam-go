@@ -91,19 +91,16 @@ func Main(ctx context.Context, controlEndpoint string, opts Options, exec ExecFu
 	var wg sync.WaitGroup
 	respc := make(chan *fnpb.InstructionResponse, 100)
 
-	wg.Add(1)
-
 	// gRPC requires all writers to a stream be the same goroutine, so this is the
 	// goroutine for managing responses back to the control service.
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for resp := range respc {
 			if err := controlStub.Send(resp); err != nil {
 				slog.ErrorContext(ctx, "control.Send: Failed to respond", "error", err)
 			}
 		}
 		slog.DebugContext(ctx, "control response channel closed")
-	}()
+	})
 
 	ctrl := &Control{
 		dataMan:     &DataChannelManager{},

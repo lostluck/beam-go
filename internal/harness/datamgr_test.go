@@ -63,7 +63,7 @@ func (f *fakeDataClient) Recv() (*fnpb.Elements, error) {
 	msg := fnpb.Elements{}
 
 	// Send extraData more than the number of elements buffered in the channel.
-	for i := 0; i < bufElements+extraData; i++ {
+	for range bufElements + extraData {
 		msg.Data = append(msg.Data, &elemData)
 	}
 
@@ -436,12 +436,10 @@ func BenchmarkElementChan(b *testing.B) {
 			}
 			batch := &fnpb.Elements{Data: es}
 			var wg sync.WaitGroup
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for range elms {
 				}
-			}()
+			})
 			// Batch elements sizes.
 			for i := 0; i < b.N; i += bench.size {
 				client.Send(batch)
@@ -476,7 +474,7 @@ func TestDataChannelRemoveInstruction_limitInstructionCap(t *testing.T) {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	c := makeDataChannel(ctx, "id", client, cancelFn)
 
-	for i := 0; i < endedInstructionCap+10; i++ {
+	for i := range endedInstructionCap + 10 {
 		instID := instructionID(fmt.Sprintf("inst_ref%d", i))
 		c.OpenElementChan(ctx, "ptr", instID, nil)
 		c.removeInstruction(instID)

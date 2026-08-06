@@ -76,10 +76,7 @@ func splitHelper(
 		}
 		// All split points are valid so just split at safe index closest to
 		// fraction.
-		splitIdx := int64(math.Round(splitFloat))
-		if splitIdx < safeStart {
-			splitIdx = safeStart
-		}
+		splitIdx := max(int64(math.Round(splitFloat)), safeStart)
 		return splitIdx, -1.0, nil
 	}
 

@@ -17,6 +17,7 @@ package harness
 
 import (
 	"log/slog"
+	"maps"
 	"testing"
 	"testing/slogtest"
 
@@ -47,9 +48,7 @@ func parseLogEntries(data *fnpb.LogEntry) map[string]any {
 	if data.LogLocation != "" {
 		m[slog.SourceKey] = data.LogLocation
 	}
-	for k, v := range structToMap(data.CustomData) {
-		m[k] = v
-	}
+	maps.Copy(m, structToMap(data.CustomData))
 	return m
 }
 

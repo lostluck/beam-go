@@ -17,6 +17,7 @@ package beam_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"lostluck.dev/beam-go"
@@ -30,11 +31,9 @@ type countFn[E comparable] struct {
 
 func (fn *countFn[E]) ProcessBundle(dfc *beam.DFC[E]) error {
 	return dfc.Process(func(ec beam.ElmC, elm E) error {
-		for _, countable := range fn.Countable {
-			if elm == countable {
-				fn.Hit.Inc(dfc, 1)
-				return nil
-			}
+		if slices.Contains(fn.Countable, elm) {
+			fn.Hit.Inc(dfc, 1)
+			return nil
 		}
 		fn.Miss.Inc(dfc, 1)
 		return nil

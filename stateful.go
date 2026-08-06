@@ -47,16 +47,15 @@ func StatefulParDo[DF Transform[KV[K, V]], K Keys, V Element](s *Scope, input PC
 }
 
 var (
-	statefaceRT = reflect.TypeOf((*stateIface)(nil)).Elem()
-	timerfaceRT = reflect.TypeOf((*timerIface)(nil)).Elem()
+	statefaceRT = reflect.TypeFor[stateIface]()
+	timerfaceRT = reflect.TypeFor[timerIface]()
 )
 
 // IsStateful returns a list of the stateful fields in the DoFn.
 func extractStateful[E Element](dofn Transform[E]) []string {
 	rt := reflect.TypeOf(dofn).Elem()
 	var ret []string
-	for i := 0; i < rt.NumField(); i++ {
-		f := rt.Field(i)
+	for f := range rt.Fields() {
 
 		ptrf := reflect.PointerTo(f.Type)
 
@@ -133,9 +132,9 @@ func (fn *hiddenKeyedStateful[T, K, V]) initialize(ctx context.Context, dataCon 
 
 	fn.stateInterfaces = make([]stateIface, 0, len(states))
 	stb := &stateInitBase{
-		ctx: ctx,
+		ctx:     ctx,
 		dataCon: dataCon,
-		url: url,
+		url:     url,
 	}
 	// Initialize states
 	for stateID, spec := range states {

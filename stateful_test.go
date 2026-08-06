@@ -169,7 +169,6 @@ func TestStatefulParDo_Value(t *testing.T) {
 	}
 }
 
-
 type StateMapDoFn struct {
 	MyMap beam.StateMap[string, int]
 
@@ -418,4 +417,3 @@ func TestStatefulParDo_ValueCacheInvariants(t *testing.T) {
 		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
 	}
 }
-

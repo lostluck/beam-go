@@ -42,7 +42,7 @@ func TestCreate(t *testing.T) {
 func TestMarshal(t *testing.T) {
 	dofn := newCreateFn("one", "two", "three")
 	wrap := dofnWrap{
-		TypeName: reflect.TypeOf(dofn).Elem().Name(),
+		TypeName: reflect.TypeFor[createFn[string]]().Name(),
 		DoFn:     dofn,
 	}
 	wrappedPayload, err := json.Marshal(&wrap, json.DefaultOptionsV2(), jsonDoFnMarshallers())
@@ -51,7 +51,7 @@ func TestMarshal(t *testing.T) {
 	}
 	t.Log(string(wrappedPayload))
 	var wrapGot dofnWrap
-	if err := json.Unmarshal(wrappedPayload, &wrapGot, json.DefaultOptionsV2(), jsonDoFnUnmarshallers(map[string]reflect.Type{wrap.TypeName: reflect.TypeOf(dofn).Elem()}, "name")); err != nil {
+	if err := json.Unmarshal(wrappedPayload, &wrapGot, json.DefaultOptionsV2(), jsonDoFnUnmarshallers(map[string]reflect.Type{wrap.TypeName: reflect.TypeFor[createFn[string]]()}, "name")); err != nil {
 		t.Errorf("error unwrapping payload %v", wrap)
 	}
 	t.Logf("got %#v", wrapGot)

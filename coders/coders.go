@@ -137,8 +137,7 @@ func buildRowCoder[C rowStructCoderBuilder](c C, rt reflect.Type) C {
 	}
 	// TODO: move this to be generated from the Schema + the user type.
 	// Also need to deal with length prefixing. Ugh.
-	for i := 0; i < rt.NumField(); i++ {
-		sf := rt.Field(i)
+	for sf := range rt.Fields() {
 		if !sf.IsExported() {
 			// Put in dummy handlers for unexported fields.
 			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {})

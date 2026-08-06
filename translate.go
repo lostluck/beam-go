@@ -693,8 +693,8 @@ func decodePort(data []byte) (harness.Port, string, error) {
 }
 
 var (
-	efaceRT               = reflect.TypeOf((*emitIface)(nil)).Elem()
-	procSizedElmAndRestRT = reflect.TypeOf((*procSizedElmAndRestIface)(nil)).Elem()
+	efaceRT               = reflect.TypeFor[emitIface]()
+	procSizedElmAndRestRT = reflect.TypeFor[procSizedElmAndRestIface]()
 )
 
 // getEmitIfaceByName extracts an emitter from the DoFn so we can get the exact type
@@ -726,8 +726,7 @@ func getEmitIfaceByName(doFnT reflect.Type, field string, outs map[string]nodeIn
 	// We only need the actual type anyway.
 	var rt reflect.Type
 	var rename string
-	for i := 0; i < doFnT.NumField(); i++ {
-		sf := doFnT.Field(i)
+	for sf := range doFnT.Fields() {
 		if reflect.PointerTo(sf.Type).Implements(efaceRT) {
 			if rt != nil {
 				return nil, false

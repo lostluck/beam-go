@@ -146,7 +146,7 @@ func BenchmarkPipe(b *testing.B) {
 				imp := Impulse(s)
 				src := ParDo(s, imp, &SourceFn{Count: b.N})
 				iden := src.Output
-				for i := 0; i < numDoFns; i++ {
+				for range numDoFns {
 					iden = ParDo(s, iden, &IdenFn[int]{}).Output
 				}
 				ParDo(s, iden, &DiscardFn[int]{}, Name("sink"))
@@ -363,10 +363,7 @@ func BenchmarkGBKSum_int(b *testing.B) {
 			if err != nil {
 				b.Error(err)
 			}
-			want := mod
-			if b.N < mod {
-				want = b.N
-			}
+			want := min(b.N, mod)
 			if got, want := int(pr.Counters["sink.Processed"]), want; got != want {
 				b.Fatalf("processed didn't match bench number: got %v want %v", got, want)
 			}
@@ -387,10 +384,7 @@ func BenchmarkGBKSum_Lifted_int(b *testing.B) {
 			if err != nil {
 				b.Error(err)
 			}
-			want := mod
-			if b.N < mod {
-				want = b.N
-			}
+			want := min(b.N, mod)
 			if got, want := int(pr.Counters["sink.Processed"]), want; got != want {
 				b.Fatalf("processed didn't match bench number: got %v want %v", got, want)
 			}
