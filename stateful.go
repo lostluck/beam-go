@@ -132,6 +132,11 @@ func (fn *hiddenKeyedStateful[T, K, V]) initialize(ctx context.Context, dataCon 
 	fn.keyCoder = coderFromProto[K](coders, keyCoderID)
 
 	fn.stateInterfaces = make([]stateIface, 0, len(states))
+	stb := &stateInitBase{
+		ctx: ctx,
+		dataCon: dataCon,
+		url: url,
+	}
 	// Initialize states
 	for stateID, spec := range states {
 		// TODO: Also support fixed array of some states.
@@ -141,7 +146,7 @@ func (fn *hiddenKeyedStateful[T, K, V]) initialize(ctx context.Context, dataCon 
 		}
 		// TODO: COLLECT STATES HERE, so we can call them OnBundleFinish, when we move to transaction tracking
 		if st, ok := fv.Addr().Interface().(stateIface); ok {
-			st.initialize(ctx, dataCon, url, stateID, transformID, spec, coders)
+			st.initialize(stb, stateID, transformID, spec, coders)
 			fn.stateInterfaces = append(fn.stateInterfaces, st)
 		} else {
 			panic(fmt.Sprintf("unnown state field with ID %v, doesn't implement stateful for field type %v", stateID, fv.Type()))
@@ -177,16 +182,19 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 			memoKeys[e.Key] = kb
 		}
 
-		if len(ec.windows) > 1 {
+		win := coders.GWC{}
+		if len(ec.windows) == 1 {
+			win = ec.windows[0]
+		} else if len(ec.windows) > 1 {
 			panic("multiple windows, in single window context")
 		}
 
-		wb, exists := memoWins[ec.windows[0]]
+		wb, exists := memoWins[win]
 		if !exists {
 			enc := coders.NewEncoder()
-			fn.keyCoder.Encode(enc, e.Key)
-			kb = string(enc.Data())
-			memoKeys[e.Key] = kb
+			win.Encode(enc)
+			wb = string(enc.Data())
+			memoWins[win] = wb
 		}
 
 		ec.keyBytes = kb

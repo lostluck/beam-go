@@ -2,11 +2,13 @@ package beam
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"iter"
 	"maps"
 	"reflect"
 	"slices"
+	"time"
 
 	"github.com/go-json-experiment/json"
 	"lostluck.dev/beam-go/coders"
@@ -28,7 +30,7 @@ type stateIface interface {
 	isState()
 	persist() error
 	toProtoParts(params translateParams) *pipepb.StateSpec
-	initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder)
+	initialize(stb *stateInitBase, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder)
 }
 
 const (
@@ -72,9 +74,6 @@ type (
 	// valid indicates that this entry has been written to in this bundle, and
 	// it contains real values.
 	//
-	// dirty indicates that the fresh value is valid. This will often be
-	// returned with a user read call, disjuncted with loaded as needed.
-	//
 	// loaded indicates that the runner field is valid, and that we have already
 	// read the state value from the runner.
 	//
@@ -85,8 +84,8 @@ type (
 	// a clear before appending, but that would be a problem for larger, more
 	// expensive to encode values.
 	stateCacheEntry[V any] struct {
-		fresh, runner                 V
-		valid, dirty, loaded, cleared bool
+		fresh, runner          V
+		valid, loaded, cleared bool
 	}
 
 	// stateCache handles per bundle state within a state cell.
@@ -120,7 +119,7 @@ func (sc *stateCache[V]) Put(k, w string, entry stateCacheEntry[V]) {
 // Clear zeroes the state in the cache, and sets the valid bit to false, and
 // the cleared bit to true.
 func (sc *stateCache[V]) Clear(k, w string) {
-	sc.cache[stateCacheKey{k, w}] = stateCacheEntry[V]{valid: false, dirty: true, cleared: true}
+	sc.cache[stateCacheKey{k, w}] = stateCacheEntry[V]{valid: false, cleared: true}
 }
 
 // Iter provides iteration through the cache, but also clears the cache immeadiately.
@@ -131,38 +130,74 @@ func (sc *stateCache[V]) Iter() iter.Seq2[stateCacheKey, stateCacheEntry[V]] {
 	return maps.All(sc.cache)
 }
 
-type stateInit struct {
+type stateInitBase struct {
 	ctx     context.Context
 	dataCon harness.DataContext
 	url     string
+}
+
+type stateInit struct {
+	*stateInitBase
 	keyPBFn func(key, win []byte) *fnpb.StateKey
 }
 
-func (sti stateInit) bagReader(key, win []byte) harness.NextBuffer {
-	keyPb := sti.keyPBFn(key, win)
-	r, err := sti.dataCon.State.OpenReader(sti.ctx, sti.url, keyPb)
+func (stib *stateInitBase) reader(stateKey *fnpb.StateKey) harness.NextBuffer {
+	r, err := stib.dataCon.State.OpenReader(stib.ctx, stib.url, stateKey)
 	if err != nil {
 		panic(err)
 	}
 	return r
 }
 
-func (sti stateInit) bagAppender(key, win []byte) io.Writer {
-	keyPb := sti.keyPBFn(key, win)
-	w, err := sti.dataCon.State.OpenWriter(sti.ctx, sti.url, keyPb, harness.StateWriteAppend)
+func (stib *stateInitBase) appender(stateKey *fnpb.StateKey) io.Writer {
+	w, err := stib.dataCon.State.OpenWriter(stib.ctx, stib.url, stateKey, harness.StateWriteAppend)
 	if err != nil {
 		panic(err)
 	}
 	return w
 }
 
-func (sti stateInit) bagClearer(key, win []byte) io.Writer {
-	keyPb := sti.keyPBFn(key, win)
-	w, err := sti.dataCon.State.OpenWriter(sti.ctx, sti.url, keyPb, harness.StateWriteClear)
+func (stib *stateInitBase) clearer(stateKey *fnpb.StateKey) io.Writer {
+	w, err := stib.dataCon.State.OpenWriter(stib.ctx, stib.url, stateKey, harness.StateWriteClear)
 	if err != nil {
 		panic(err)
 	}
 	return w
+}
+
+func (sti stateInit) Reader(key, win []byte) harness.NextBuffer {
+	keyPb := sti.keyPBFn(key, win)
+	return sti.reader(keyPb)
+}
+
+func (sti stateInit) Appender(key, win []byte) io.Writer {
+	keyPb := sti.keyPBFn(key, win)
+	return sti.appender(keyPb)
+}
+
+func (sti stateInit) Clearer(key, win []byte) io.Writer {
+	keyPb := sti.keyPBFn(key, win)
+	return sti.clearer(keyPb)
+}
+
+type stateMapInit struct {
+	*stateInitBase
+	valsPBFn func(key, win, user []byte) *fnpb.StateKey
+}
+
+func (sti stateMapInit) Reader(key, win, user []byte) harness.NextBuffer {
+	stateKey := sti.valsPBFn(key, win, user)
+	return sti.reader(stateKey)
+}
+
+func (sti stateMapInit) Appender(key, win, user []byte) io.Writer {
+	stateKey := sti.valsPBFn(key, win, user)
+	return sti.appender(stateKey)
+}
+
+func (sti stateMapInit) Clearer(key, win, user []byte) io.Writer {
+	stateKey := sti.valsPBFn(key, win, user)
+	return sti.clearer(stateKey)
 }
 
 // StateBag represents an unordered collection of state associated with the
@@ -191,7 +226,7 @@ func (st *StateBag[E]) toProtoParts(params translateParams) *pipepb.StateSpec {
 	}
 }
 
-func (st *StateBag[E]) initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
+func (st *StateBag[E]) initialize(stb *stateInitBase, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
 	coderID := spec.GetBagSpec().GetElementCoderId()
 	st.coder = coderFromProto[E](coders, coderID)
 
@@ -208,10 +243,8 @@ func (st *StateBag[E]) initialize(ctx context.Context, dataCon harness.DataConte
 		}
 	}
 	st.init = stateInit{
-		keyPBFn: keyPBFn,
-		url:     url,
-		ctx:     ctx,
-		dataCon: dataCon,
+		keyPBFn:       keyPBFn,
+		stateInitBase: stb,
 	}
 	st.cache = newStateCache[[]E]()
 }
@@ -223,12 +256,12 @@ func (st *StateBag[E]) persist() error {
 		}
 
 		if entry.cleared {
-			c := st.init.bagClearer([]byte(key.k), []byte(key.w))
+			c := st.init.Clearer([]byte(key.k), []byte(key.w))
 			c.Write(nil)
 		}
 
 		// We only ever need to write the fresh values for the bag.
-		w := st.init.bagAppender([]byte(key.k), []byte(key.w))
+		w := st.init.Appender([]byte(key.k), []byte(key.w))
 		enc := coders.NewEncoder()
 		for _, v := range entry.fresh {
 			st.coder.Encode(enc, v)
@@ -254,7 +287,7 @@ func (st *StateBag[E]) Read(ec ElmC) iter.Seq[E] {
 	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
 	if !entry.valid {
 		// We have no local elements, so just return the iterator immeadiately.
-		r := st.init.bagReader([]byte(ec.keyBytes), []byte(ec.winBytes))
+		r := st.init.Reader([]byte(ec.keyBytes), []byte(ec.winBytes))
 		iter := iterClosureWithCoder(st.coder, r)
 
 		// TODO: Do smarter handling for large amounts of state.
@@ -295,7 +328,7 @@ func (st *StateValue[E]) toProtoParts(params translateParams) *pipepb.StateSpec 
 	}
 }
 
-func (st *StateValue[E]) initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
+func (st *StateValue[E]) initialize(stb *stateInitBase, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
 	coderID := spec.GetReadModifyWriteSpec().GetCoderId()
 	st.coder = coderFromProto[E](coders, coderID)
 
@@ -313,10 +346,8 @@ func (st *StateValue[E]) initialize(ctx context.Context, dataCon harness.DataCon
 	}
 
 	st.init = stateInit{
-		keyPBFn: keyPBFn,
-		url:     url,
-		ctx:     ctx,
-		dataCon: dataCon,
+		keyPBFn:       keyPBFn,
+		stateInitBase: stb,
 	}
 	st.cache = newStateCache[E]()
 }
@@ -328,11 +359,11 @@ func (st *StateValue[E]) persist() error {
 		}
 
 		if entry.cleared {
-			c := st.init.bagClearer([]byte(key.k), []byte(key.w))
+			c := st.init.Clearer([]byte(key.k), []byte(key.w))
 			c.Write(nil)
 		}
 
-		w := st.init.bagAppender([]byte(key.k), []byte(key.w))
+		w := st.init.Appender([]byte(key.k), []byte(key.w))
 		enc := coders.NewEncoder()
 		st.coder.Encode(enc, entry.fresh)
 		if _, err := w.Write(enc.Data()); err != nil {
@@ -354,13 +385,13 @@ func (st *StateValue[E]) Clear(ec ElmC) {
 	st.cache.Clear(ec.keyBytes, ec.winBytes)
 }
 
-func (st *StateValue[E]) Read(ec ElmC) (E, bool) {
+func (st *StateValue[E]) Get(ec ElmC) (E, bool) {
 	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
 	if entry.valid {
 		return entry.fresh, true
 	}
 	// Nothing cached, so we must read.
-	r := st.init.bagReader([]byte(ec.keyBytes), []byte(ec.winBytes))
+	r := st.init.Reader([]byte(ec.keyBytes), []byte(ec.winBytes))
 	iter := iterClosureWithCoder(st.coder, r)
 
 	iter(func(in E) bool {
@@ -373,7 +404,428 @@ func (st *StateValue[E]) Read(ec ElmC) (E, bool) {
 	return entry.fresh, entry.valid
 }
 
-// AsStateCombining uses a [Combiner] to produce
+// StateMap represents a single key, value store
+// associated with the embedded DoFn, the element's window, and a key.
+type StateMap[K Keys, V Element] struct {
+	state
+	initKeys stateInit // Can only use Read and Clear.
+	initVals stateMapInit
+
+	keyCoder coders.Coder[K]
+	valCoder coders.Coder[V]
+
+	cache *stateCache[map[K]stateCacheEntry[V]]
+}
+
+var _ stateIface = (*StateMap[int, int])(nil)
+
+func (st *StateMap[K, V]) toProtoParts(params translateParams) *pipepb.StateSpec {
+	keyCoderID := addCoder[K](params.InternedCoders, params.Comps.GetCoders())
+	valueCoderID := addCoder[V](params.InternedCoders, params.Comps.GetCoders())
+	return &pipepb.StateSpec{
+		Spec: &pipepb.StateSpec_MapSpec{
+			MapSpec: &pipepb.MapStateSpec{
+				KeyCoderId:   keyCoderID,
+				ValueCoderId: valueCoderID,
+			},
+		},
+		Protocol: &pipepb.FunctionSpec{
+			Urn: urnMultiMapUserState,
+		},
+	}
+}
+
+func (st *StateMap[K, V]) initialize(stb *stateInitBase, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
+	keyCoderID := spec.GetMapSpec().GetKeyCoderId()
+	st.keyCoder = coderFromProto[K](coders, keyCoderID)
+
+	valCoderID := spec.GetMapSpec().GetValueCoderId()
+	st.valCoder = coderFromProto[V](coders, valCoderID)
+
+	valuesPBFn := func(key, win, user []byte) *fnpb.StateKey {
+		return &fnpb.StateKey{
+			Type: &fnpb.StateKey_MultimapUserState_{
+				MultimapUserState: &fnpb.StateKey_MultimapUserState{
+					TransformId: transformID,
+					UserStateId: stateID,
+					Key:         key,
+					Window:      win,
+					MapKey:      user,
+				},
+			},
+		}
+	}
+	keysPBFn := func(key, win []byte) *fnpb.StateKey {
+		return &fnpb.StateKey{
+			Type: &fnpb.StateKey_MultimapKeysUserState_{
+				MultimapKeysUserState: &fnpb.StateKey_MultimapKeysUserState{
+					TransformId: transformID,
+					UserStateId: stateID,
+					Key:         key,
+					Window:      win,
+				},
+			},
+		}
+	}
+
+	st.initKeys = stateInit{
+		keyPBFn:       keysPBFn,
+		stateInitBase: stb,
+	}
+
+	st.initVals = stateMapInit{
+		valsPBFn:      valuesPBFn,
+		stateInitBase: stb,
+	}
+	st.cache = newStateCache[map[K]stateCacheEntry[V]]()
+}
+
+func (st *StateMap[K, V]) persist() error {
+	for key, entry := range st.cache.Iter() {
+		if !entry.valid {
+			panic(fmt.Sprintf("state %+v has an invalid entry %+v", key, entry))
+		}
+
+		if entry.cleared {
+			c := st.initKeys.Clearer([]byte(key.k), []byte(key.w))
+			c.Write(nil)
+		}
+
+		for userKey, userEntry := range entry.fresh {
+			if !userEntry.valid {
+				panic(fmt.Sprintf("state %+v witn userKey %v has an invalid userEntry %+v", key, userKey, userEntry))
+			}
+			enc := coders.NewEncoder()
+			st.keyCoder.Encode(enc, userKey)
+			userKeyBytes := enc.Data()
+			if userEntry.cleared {
+				c := st.initVals.Clearer([]byte(key.k), []byte(key.w), userKeyBytes)
+				c.Write(nil)
+			}
+
+			w := st.initVals.Appender([]byte(key.k), []byte(key.w), userKeyBytes)
+			valEnc := coders.NewEncoder()
+			st.valCoder.Encode(valEnc, userEntry.fresh)
+			if _, err := w.Write(valEnc.Data()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Clear empties the entire map state.
+func (st *StateMap[K, V]) Clear(ec ElmC) {
+	st.cache.Clear(ec.keyBytes, ec.winBytes)
+}
+
+// Remove clears the value for the given map key.
+func (st *StateMap[K, V]) Remove(ec ElmC, mapKey K) {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if !entry.valid {
+		entry.fresh = map[K]stateCacheEntry[V]{}
+	}
+	entry.fresh[mapKey] = stateCacheEntry[V]{valid: true, cleared: true}
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+}
+
+// Set the value for the given map key.
+func (st *StateMap[K, V]) Set(ec ElmC, mapKey K, mapVal V) {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if !entry.valid {
+		entry.fresh = map[K]stateCacheEntry[V]{}
+	}
+	entry.fresh[mapKey] = stateCacheEntry[V]{fresh: mapVal, valid: true, cleared: true}
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+}
+
+// Keys returns all map keys associated with this element's key and window.
+// They can be used to do specific operations against this map and state.
+func (st *StateMap[K, V]) Keys(ec ElmC) iter.Seq[K] {
+	r := st.initKeys.Reader([]byte(ec.keyBytes), []byte(ec.winBytes))
+	return iterClosureWithCoder(st.keyCoder, r)
+}
+
+// Values returns an iterator for any value associated with the map key.
+func (st *StateMap[K, V]) Values(ec ElmC, mapKey K) iter.Seq[V] {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if entry.valid {
+		if uEntry, ok := entry.fresh[mapKey]; ok {
+			if uEntry.valid {
+				return slices.Values([]V{uEntry.fresh})
+			}
+			if uEntry.cleared {
+				return func(yield func(V) bool) {}
+			}
+		}
+	}
+	if entry.cleared {
+		return func(yield func(V) bool) {}
+	}
+	enc := coders.NewEncoder()
+	st.keyCoder.Encode(enc, mapKey)
+	r := st.initVals.Reader([]byte(ec.keyBytes), []byte(ec.winBytes), enc.Data())
+	iter := iterClosureWithCoder(st.valCoder, r)
+
+	var vals []V
+	for val := range iter {
+		vals = append(vals, val)
+	}
+	if !entry.valid {
+		entry.fresh = map[K]stateCacheEntry[V]{}
+		entry.valid = true
+	}
+	if len(vals) > 0 {
+		entry.fresh[mapKey] = stateCacheEntry[V]{
+			fresh:  vals[0],
+			runner: vals[0],
+			valid:  true,
+			loaded: true,
+		}
+	}
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+	return slices.Values(vals)
+}
+
+// Get returns the value if for the map Key if one is set.
+func (st *StateMap[K, V]) Get(ec ElmC, mapKey K) (V, bool) {
+	for v := range st.Values(ec, mapKey) {
+		return v, true
+	}
+	var zero V
+	return zero, false
+}
+
+// All returns an iterator over all the key value pairs in the map.
+func (st *StateMap[K, V]) All(ec ElmC) iter.Seq2[K, V] {
+	return func(yield func(K, V) bool) {
+		entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+		seen := map[K]bool{}
+
+		if !entry.cleared {
+			for k := range st.Keys(ec) {
+				seen[k] = true
+				if entry.valid {
+					if uEntry, ok := entry.fresh[k]; ok {
+						if uEntry.valid {
+							if !yield(k, uEntry.fresh) {
+								return
+							}
+							continue
+						}
+						if uEntry.cleared {
+							continue
+						}
+					}
+				}
+				val, exists := st.Get(ec, k)
+				if exists {
+					if !yield(k, val) {
+						return
+					}
+				}
+			}
+		}
+
+		if entry.valid {
+			for k, uEntry := range entry.fresh {
+				if seen[k] {
+					continue
+				}
+				if uEntry.valid {
+					if !yield(k, uEntry.fresh) {
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// StateSet represents a de-duplicated set of values
+// associated with the embedded DoFn, the element's window, and a key.
+//
+// Values are deduplicated by their encoded value, but additionally, the set
+// values must be Go comparable.
+type StateSet[E Keys] struct {
+	state
+	init  stateInit
+	coder coders.Coder[E]
+
+	cache *stateCache[map[E]bool]
+}
+
+var _ stateIface = (*StateSet[int])(nil)
+
+func (st *StateSet[E]) initialize(stb *stateInitBase, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
+	coderID := spec.GetSetSpec().GetElementCoderId()
+	st.coder = coderFromProto[E](coders, coderID)
+
+	keyPBFn := func(key, win []byte) *fnpb.StateKey {
+		return &fnpb.StateKey{
+			Type: &fnpb.StateKey_MultimapKeysUserState_{
+				MultimapKeysUserState: &fnpb.StateKey_MultimapKeysUserState{
+					TransformId: transformID,
+					UserStateId: stateID,
+					Key:         key,
+					Window:      win,
+				},
+			},
+		}
+	}
+	st.init = stateInit{
+		keyPBFn:       keyPBFn,
+		stateInitBase: stb,
+	}
+	st.cache = newStateCache[map[E]bool]()
+	panic("unimplemented")
+}
+
+func (st *StateSet[E]) toProtoParts(params translateParams) *pipepb.StateSpec {
+	coderID := addCoder[E](params.InternedCoders, params.Comps.GetCoders())
+	return &pipepb.StateSpec{
+		Spec: &pipepb.StateSpec_SetSpec{
+			SetSpec: &pipepb.SetStateSpec{
+				ElementCoderId: coderID,
+			},
+		},
+		Protocol: &pipepb.FunctionSpec{
+			Urn: urnMultiMapUserState,
+		},
+	}
+}
+
+// StateMultiMap represents a mapping of keys to lists of values.
+type StateMultiMap[K Keys, V Element] struct {
+	state
+	initKeys stateInit
+	initVals stateMapInit
+
+	keyCoder coders.Coder[K]
+	valCoder coders.Coder[V]
+
+	cache *stateCache[map[K]stateCacheEntry[[]V]]
+}
+
+var _ stateIface = (*StateMultiMap[int, int])(nil)
+
+func (st *StateMultiMap[K, V]) initialize(stb *stateInitBase, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
+	keyCoderID := spec.GetMultimapSpec().GetKeyCoderId()
+	st.keyCoder = coderFromProto[K](coders, keyCoderID)
+
+	valCoderID := spec.GetMultimapSpec().GetValueCoderId()
+	st.valCoder = coderFromProto[V](coders, valCoderID)
+
+	valuesPBFn := func(key, win, user []byte) *fnpb.StateKey {
+		return &fnpb.StateKey{
+			Type: &fnpb.StateKey_MultimapUserState_{
+				MultimapUserState: &fnpb.StateKey_MultimapUserState{
+					TransformId: transformID,
+					UserStateId: stateID,
+					Key:         key,
+					Window:      win,
+					MapKey:      user,
+				},
+			},
+		}
+	}
+	keysPBFn := func(key, win []byte) *fnpb.StateKey {
+		return &fnpb.StateKey{
+			Type: &fnpb.StateKey_MultimapKeysUserState_{
+				MultimapKeysUserState: &fnpb.StateKey_MultimapKeysUserState{
+					TransformId: transformID,
+					UserStateId: stateID,
+					Key:         key,
+					Window:      win,
+				},
+			},
+		}
+	}
+
+	st.initKeys = stateInit{
+		keyPBFn:       keysPBFn,
+		stateInitBase: stb,
+	}
+	st.initVals = stateMapInit{
+		valsPBFn:      valuesPBFn,
+		stateInitBase: stb,
+	}
+	st.cache = newStateCache[map[K]stateCacheEntry[[]V]]()
+	panic("unimplemented")
+}
+
+func (st *StateMultiMap[K, V]) toProtoParts(params translateParams) *pipepb.StateSpec {
+	keyCoderID := addCoder[K](params.InternedCoders, params.Comps.GetCoders())
+	valueCoderID := addCoder[V](params.InternedCoders, params.Comps.GetCoders())
+	return &pipepb.StateSpec{
+		Spec: &pipepb.StateSpec_MultimapSpec{
+			MultimapSpec: &pipepb.MultimapStateSpec{
+				KeyCoderId:   keyCoderID,
+				ValueCoderId: valueCoderID,
+			},
+		},
+		Protocol: &pipepb.FunctionSpec{
+			Urn: urnBagUserState,
+		},
+	}
+}
+
+// StateOrderedList represents a sorted list of values, ordered by event time.
+// associated with the embedded DoFn, the element's window, and a key.
+type StateOrderedList[E Element] struct {
+	state
+	init  stateInit
+	coder coders.Coder[E]
+
+	cache *stateCache[[]orderedEntry[E]]
+}
+
+type orderedEntry[E Element] struct {
+	EventTime time.Time
+	Val       E
+}
+
+var _ stateIface = (*StateOrderedList[int])(nil)
+
+func (st *StateOrderedList[E]) initialize(stb *stateInitBase, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
+	coderID := spec.GetOrderedListSpec().GetElementCoderId()
+	st.coder = coderFromProto[E](coders, coderID)
+
+	keyPBFn := func(key, win []byte) *fnpb.StateKey {
+		return &fnpb.StateKey{
+			Type: &fnpb.StateKey_BagUserState_{
+				BagUserState: &fnpb.StateKey_BagUserState{
+					TransformId: transformID,
+					UserStateId: stateID,
+					Key:         key,
+					Window:      win,
+				},
+			},
+		}
+	}
+	st.init = stateInit{
+		keyPBFn:       keyPBFn,
+		stateInitBase: stb,
+	}
+	st.cache = newStateCache[[]orderedEntry[E]]()
+}
+
+func (st *StateOrderedList[E]) toProtoParts(params translateParams) *pipepb.StateSpec {
+	// TODO: Do the correct coder, including the event time in the encoding.
+	coderID := addCoder[E](params.InternedCoders, params.Comps.GetCoders())
+	return &pipepb.StateSpec{
+		Spec: &pipepb.StateSpec_OrderedListSpec{
+			OrderedListSpec: &pipepb.OrderedListStateSpec{
+				ElementCoderId: coderID,
+			},
+		},
+		Protocol: &pipepb.FunctionSpec{
+			Urn: urnBagUserState,
+		},
+	}
+}
+
+// AsStateCombining uses a [Combiner] to produce a combining state.
 func AsStateCombining[A, I, O Element, AM AccumulatorMerger[A]](comb Combiner[A, I, O, AM]) StateCombining[A, I, O, AM] {
 	return StateCombining[A, I, O, AM]{
 		comb: comb,
@@ -386,8 +838,12 @@ func AsStateCombining[A, I, O Element, AM AccumulatorMerger[A]](comb Combiner[A,
 // Must be created using AsStateCombining, using a standard combiner.
 type StateCombining[A, I, O Element, AM AccumulatorMerger[A]] struct {
 	state
+	init stateInit
+
 	comb  Combiner[A, I, O, AM]
 	coder coders.Coder[A]
+
+	cache *stateCache[A]
 }
 
 var _ stateIface = (*StateCombining[int, int, int, AccumulatorMerger[int]])(nil)
@@ -432,140 +888,29 @@ func (st *StateCombining[A, I, O, AM]) toProtoParts(params translateParams) *pip
 	}
 }
 
-func (st *StateCombining[A, I, O, AM]) initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
+func (st *StateCombining[A, I, O, AM]) initialize(stb *stateInitBase, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
 	coderID := spec.GetCombiningSpec().GetAccumulatorCoderId()
 	st.coder = coderFromProto[A](coders, coderID)
-	panic("unimplemented")
-}
 
-// StateMap represents a single key, value store
-// associated with the embedded DoFn, the element's window, and a key.
-type StateMap[K Keys, V Element] struct {
-	state
+	// TODO Extract combiner.
 
-	keyCoder coders.Coder[K]
-	valCoder coders.Coder[V]
-}
-
-var _ stateIface = (*StateMap[int, int])(nil)
-
-func (st *StateMap[K, V]) toProtoParts(params translateParams) *pipepb.StateSpec {
-	keyCoderID := addCoder[K](params.InternedCoders, params.Comps.GetCoders())
-	valueCoderID := addCoder[V](params.InternedCoders, params.Comps.GetCoders())
-	return &pipepb.StateSpec{
-		Spec: &pipepb.StateSpec_MapSpec{
-			MapSpec: &pipepb.MapStateSpec{
-				KeyCoderId:   keyCoderID,
-				ValueCoderId: valueCoderID,
+	keyPBFn := func(key, win []byte) *fnpb.StateKey {
+		return &fnpb.StateKey{
+			Type: &fnpb.StateKey_BagUserState_{
+				BagUserState: &fnpb.StateKey_BagUserState{
+					TransformId: transformID,
+					UserStateId: stateID,
+					Key:         key,
+					Window:      win,
+				},
 			},
-		},
-		Protocol: &pipepb.FunctionSpec{
-			Urn: urnMultiMapUserState,
-		},
+		}
 	}
-}
+	st.init = stateInit{
+		keyPBFn:       keyPBFn,
+		stateInitBase: stb,
+	}
+	st.cache = newStateCache[A]()
 
-func (st *StateMap[K, V]) initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
-	keyCoderID := spec.GetMapSpec().GetKeyCoderId()
-	st.keyCoder = coderFromProto[K](coders, keyCoderID)
-
-	valCoderID := spec.GetMapSpec().GetKeyCoderId()
-	st.valCoder = coderFromProto[V](coders, valCoderID)
 	panic("unimplemented")
-}
-
-// StateSet represents a de-duplicated set of values
-// associated with the embedded DoFn, the element's window, and a key.
-//
-// Values are deduplicated by their encoded value.
-type StateSet[E Element] struct {
-	state
-	coder coders.Coder[E]
-}
-
-var _ stateIface = (*StateSet[int])(nil)
-
-func (st *StateSet[E]) initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
-	coderID := spec.GetSetSpec().GetElementCoderId()
-	st.coder = coderFromProto[E](coders, coderID)
-	panic("unimplemented")
-}
-
-func (st *StateSet[E]) toProtoParts(params translateParams) *pipepb.StateSpec {
-	coderID := addCoder[E](params.InternedCoders, params.Comps.GetCoders())
-	return &pipepb.StateSpec{
-		Spec: &pipepb.StateSpec_SetSpec{
-			SetSpec: &pipepb.SetStateSpec{
-				ElementCoderId: coderID,
-			},
-		},
-		Protocol: &pipepb.FunctionSpec{
-			Urn: urnMultiMapUserState,
-		},
-	}
-}
-
-// StateMultiMap represents a mapping of keys to lists of values.
-type StateMultiMap[K Keys, V Element] struct {
-	state
-
-	keyCoder coders.Coder[K]
-	valCoder coders.Coder[V]
-}
-
-var _ stateIface = (*StateMultiMap[int, int])(nil)
-
-func (st *StateMultiMap[K, V]) initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
-	keyCoderID := spec.GetMultimapSpec().GetKeyCoderId()
-	st.keyCoder = coderFromProto[K](coders, keyCoderID)
-
-	valCoderID := spec.GetMultimapSpec().GetKeyCoderId()
-	st.valCoder = coderFromProto[V](coders, valCoderID)
-	panic("unimplemented")
-}
-
-func (st *StateMultiMap[K, V]) toProtoParts(params translateParams) *pipepb.StateSpec {
-	keyCoderID := addCoder[K](params.InternedCoders, params.Comps.GetCoders())
-	valueCoderID := addCoder[V](params.InternedCoders, params.Comps.GetCoders())
-	return &pipepb.StateSpec{
-		Spec: &pipepb.StateSpec_MultimapSpec{
-			MultimapSpec: &pipepb.MultimapStateSpec{
-				KeyCoderId:   keyCoderID,
-				ValueCoderId: valueCoderID,
-			},
-		},
-		Protocol: &pipepb.FunctionSpec{
-			Urn: urnBagUserState,
-		},
-	}
-}
-
-// StateOrderedList represents a sorted list of values, ordered by event time.
-// associated with the embedded DoFn, the element's window, and a key.
-type StateOrderedList[E Element] struct {
-	state
-
-	coder coders.Coder[E]
-}
-
-var _ stateIface = (*StateOrderedList[int])(nil)
-
-func (st *StateOrderedList[E]) initialize(ctx context.Context, dataCon harness.DataContext, url, stateID, transformID string, spec *pipepb.StateSpec, coders map[string]*pipepb.Coder) {
-	coderID := spec.GetOrderedListSpec().GetElementCoderId()
-	st.coder = coderFromProto[E](coders, coderID)
-}
-
-func (st *StateOrderedList[E]) toProtoParts(params translateParams) *pipepb.StateSpec {
-	// TODO: Do the correct coder, including the event time in the encoding.
-	coderID := addCoder[E](params.InternedCoders, params.Comps.GetCoders())
-	return &pipepb.StateSpec{
-		Spec: &pipepb.StateSpec_OrderedListSpec{
-			OrderedListSpec: &pipepb.OrderedListStateSpec{
-				ElementCoderId: coderID,
-			},
-		},
-		Protocol: &pipepb.FunctionSpec{
-			Urn: urnBagUserState,
-		},
-	}
 }
