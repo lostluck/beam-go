@@ -54,7 +54,7 @@ var (
 )
 
 const (
-	beamVersion  = "v2.67.0"
+	beamVersion  = "v2.69.0"
 	tagRoot      = "https://github.com/apache/beam/releases/tag"
 	downloadRoot = "https://github.com/apache/beam/releases/download"
 )
@@ -217,7 +217,7 @@ func Start(ctx context.Context, opts Options) (*Handle, error) {
 		bin = localPath
 	}
 	args := []string{
-		"--idle_shutdown_timeout=1s",
+		"--idle_shutdown_timeout=5s",
 		"--serve_http=false",
 	}
 	port := opts.Port
