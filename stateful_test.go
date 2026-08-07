@@ -290,6 +290,88 @@ func TestStatefulParDo_MapAll(t *testing.T) {
 	}
 }
 
+type StateSetDoFn struct {
+	MySet beam.StateSet[int]
+
+	Output beam.PCol[beam.KV[int, int]]
+}
+
+func (df *StateSetDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
+	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
+		if df.MySet.Contains(ec, k.Value) {
+			df.MySet.Remove(ec, k.Value)
+		} else {
+			df.MySet.Add(ec, k.Value)
+		}
+
+		var sum int
+		for v := range df.MySet.Read(ec) {
+			sum += v
+		}
+		df.Output.Emit(ec, beam.Pair(k.Key, sum))
+		if sum >= 20 {
+			df.MySet.Clear(ec)
+		}
+		return nil
+	})
+}
+
+func TestStatefulParDo_Set(t *testing.T) {
+	expected := []beam.KV[int, int]{{1, 5}, {1, 15}, {1, 5}, {2, 10}}
+
+	pr, err := beam.LaunchAndWait(context.TODO(), func(s *beam.Scope) error {
+		input := beam.Create(s, []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 10}, {2, 10}}...)
+		setted := beam.StatefulParDo(s, input, &StateSetDoFn{})
+		beam.ParDo(s, setted.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("LaunchAndWait produced an error: %v", err)
+	}
+	if got, want := pr.Counters["sink.Hit"], int64(len(expected)); got != want {
+		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
+	}
+}
+
+type StateSetClearDoFn struct {
+	MySet beam.StateSet[int]
+
+	Output beam.PCol[beam.KV[int, int]]
+}
+
+func (df *StateSetClearDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
+	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
+		df.MySet.Add(ec, k.Value)
+		var sum int
+		for v := range df.MySet.All(ec) {
+			sum += v
+		}
+		df.Output.Emit(ec, beam.Pair(k.Key, sum))
+		if sum >= 10 {
+			df.MySet.Clear(ec)
+		}
+		return nil
+	})
+}
+
+func TestStatefulParDo_SetClear(t *testing.T) {
+	expected := []beam.KV[int, int]{{1, 5}, {1, 15}, {1, 20}}
+
+	pr, err := beam.LaunchAndWait(context.TODO(), func(s *beam.Scope) error {
+		input := beam.Create(s, []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 20}}...)
+		setted := beam.StatefulParDo(s, input, &StateSetClearDoFn{})
+		beam.ParDo(s, setted.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("LaunchAndWait produced an error: %v", err)
+	}
+	if got, want := pr.Counters["sink.Hit"], int64(len(expected)); got != want {
+		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
+	}
+}
+
+
 type MultiStateDoFn struct {
 	Count  beam.StateValue[int]
 	Values beam.StateBag[int]

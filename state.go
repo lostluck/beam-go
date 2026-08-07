@@ -649,10 +649,12 @@ func (st *StateMap[K, V]) All(ec ElmC) iter.Seq2[K, V] {
 // values must be Go comparable.
 type StateSet[E Keys] struct {
 	state
-	init  stateInit
+	initKeys stateInit
+	initVals stateMapInit
+
 	coder coders.Coder[E]
 
-	cache *stateCache[map[E]bool]
+	cache *stateCache[map[E]stateCacheEntry[struct{}]]
 }
 
 var _ stateIface = (*StateSet[int])(nil)
@@ -661,7 +663,20 @@ func (st *StateSet[E]) initialize(stb *stateInitBase, stateID, transformID strin
 	coderID := spec.GetSetSpec().GetElementCoderId()
 	st.coder = coderFromProto[E](coders, coderID)
 
-	keyPBFn := func(key, win []byte) *fnpb.StateKey {
+	valuesPBFn := func(key, win, user []byte) *fnpb.StateKey {
+		return &fnpb.StateKey{
+			Type: &fnpb.StateKey_MultimapUserState_{
+				MultimapUserState: &fnpb.StateKey_MultimapUserState{
+					TransformId: transformID,
+					UserStateId: stateID,
+					Key:         key,
+					Window:      win,
+					MapKey:      user,
+				},
+			},
+		}
+	}
+	keysPBFn := func(key, win []byte) *fnpb.StateKey {
 		return &fnpb.StateKey{
 			Type: &fnpb.StateKey_MultimapKeysUserState_{
 				MultimapKeysUserState: &fnpb.StateKey_MultimapKeysUserState{
@@ -673,12 +688,17 @@ func (st *StateSet[E]) initialize(stb *stateInitBase, stateID, transformID strin
 			},
 		}
 	}
-	st.init = stateInit{
-		keyPBFn:       keyPBFn,
+
+	st.initKeys = stateInit{
+		keyPBFn:       keysPBFn,
 		stateInitBase: stb,
 	}
-	st.cache = newStateCache[map[E]bool]()
-	panic("unimplemented")
+
+	st.initVals = stateMapInit{
+		valsPBFn:      valuesPBFn,
+		stateInitBase: stb,
+	}
+	st.cache = newStateCache[map[E]stateCacheEntry[struct{}]]()
 }
 
 func (st *StateSet[E]) toProtoParts(params translateParams) *pipepb.StateSpec {
@@ -694,6 +714,157 @@ func (st *StateSet[E]) toProtoParts(params translateParams) *pipepb.StateSpec {
 		},
 	}
 }
+
+func (st *StateSet[E]) persist() error {
+	for key, entry := range st.cache.Iter() {
+		if !entry.valid && !entry.cleared {
+			continue
+		}
+
+		if entry.cleared {
+			c := st.initKeys.Clearer([]byte(key.k), []byte(key.w))
+			c.Write(nil)
+		}
+
+		if !entry.valid {
+			continue
+		}
+
+		for userElem, userEntry := range entry.fresh {
+			if !userEntry.valid && !userEntry.cleared {
+				continue
+			}
+			enc := coders.NewEncoder()
+			st.coder.Encode(enc, userElem)
+			userElemBytes := enc.Data()
+			if userEntry.cleared {
+				c := st.initVals.Clearer([]byte(key.k), []byte(key.w), userElemBytes)
+				c.Write(nil)
+			}
+			if userEntry.valid {
+				w := st.initVals.Appender([]byte(key.k), []byte(key.w), userElemBytes)
+				if _, err := w.Write(nil); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Clear empties the entire set state.
+func (st *StateSet[E]) Clear(ec ElmC) {
+	st.cache.Clear(ec.keyBytes, ec.winBytes)
+}
+
+// Remove removes the value from the set.
+func (st *StateSet[E]) Remove(ec ElmC, val E) {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if !entry.valid {
+		entry.fresh = map[E]stateCacheEntry[struct{}]{}
+	}
+	entry.fresh[val] = stateCacheEntry[struct{}]{valid: false, cleared: true}
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+}
+
+// Add adds the value to the set.
+func (st *StateSet[E]) Add(ec ElmC, val E) {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if !entry.valid {
+		entry.fresh = map[E]stateCacheEntry[struct{}]{}
+	}
+	entry.fresh[val] = stateCacheEntry[struct{}]{valid: true, cleared: true}
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+}
+
+// Contains returns true if the value is present in the set.
+func (st *StateSet[E]) Contains(ec ElmC, val E) bool {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if entry.valid {
+		if uEntry, ok := entry.fresh[val]; ok {
+			if uEntry.valid {
+				return true
+			}
+			if uEntry.cleared {
+				return false
+			}
+		}
+	}
+	if entry.cleared {
+		return false
+	}
+	enc := coders.NewEncoder()
+	st.coder.Encode(enc, val)
+	r := st.initVals.Reader([]byte(ec.keyBytes), []byte(ec.winBytes), enc.Data())
+	iter := iterClosureWithCoder(st.coder, r)
+	exists := false
+	for range iter {
+		exists = true
+		break
+	}
+	if !entry.valid {
+		entry.fresh = map[E]stateCacheEntry[struct{}]{}
+		entry.valid = true
+	}
+	if exists {
+		entry.fresh[val] = stateCacheEntry[struct{}]{
+			valid:  true,
+			loaded: true,
+		}
+	}
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+	return exists
+}
+
+// Read returns an iterator over all values in the set.
+func (st *StateSet[E]) Read(ec ElmC) iter.Seq[E] {
+	return func(yield func(E) bool) {
+		entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+		seen := map[E]bool{}
+
+		if !entry.cleared {
+			r := st.initKeys.Reader([]byte(ec.keyBytes), []byte(ec.winBytes))
+			for k := range iterClosureWithCoder(st.coder, r) {
+				seen[k] = true
+				if entry.valid {
+					if uEntry, ok := entry.fresh[k]; ok {
+						if uEntry.valid {
+							if !yield(k) {
+								return
+							}
+							continue
+						}
+						if uEntry.cleared {
+							continue
+						}
+					}
+				}
+				if !yield(k) {
+					return
+				}
+			}
+		}
+
+		if entry.valid {
+			for k, uEntry := range entry.fresh {
+				if seen[k] {
+					continue
+				}
+				if uEntry.valid {
+					if !yield(k) {
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// All returns an iterator over all values in the set.
+func (st *StateSet[E]) All(ec ElmC) iter.Seq[E] {
+	return st.Read(ec)
+}
+
 
 // StateMultiMap represents a mapping of keys to lists of values.
 type StateMultiMap[K Keys, V Element] struct {
