@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"slices"
 	"testing"
+	"time"
 
 	"lostluck.dev/beam-go"
 )
@@ -616,6 +618,153 @@ func TestStatefulParDo_MultiMapClear(t *testing.T) {
 		input := beam.Create(s, []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 20}}...)
 		mapped := beam.StatefulParDo(s, input, &StateMultiMapClearDoFn{})
 		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("LaunchAndWait produced an error: %v", err)
+	}
+	if got, want := pr.Counters["sink.Hit"], int64(len(expected)); got != want {
+		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
+	}
+}
+
+type StateOrderedListDoFn struct {
+	MyList beam.StateOrderedList[int]
+
+	Output beam.PCol[beam.KV[int, int]]
+}
+
+func (df *StateOrderedListDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
+	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
+		t := time.UnixMilli(int64(k.Value) * 100)
+		df.MyList.AppendWithTimestamp(ec, t, k.Value)
+
+		var values []int
+		for v := range df.MyList.Read(ec) {
+			values = append(values, v)
+		}
+
+		var allValues []int
+		for v := range df.MyList.All(ec) {
+			allValues = append(allValues, v)
+		}
+		if !slices.Equal(values, allValues) {
+			return fmt.Errorf("All mismatch: got %v, want %v", allValues, values)
+		}
+
+		var entriesCount int
+		for ts, v := range df.MyList.ReadEntries(ec) {
+			if ts.UnixMilli() != int64(v)*100 {
+				return fmt.Errorf("unexpected entry timestamp: got %v, want %v", ts.UnixMilli(), int64(v)*100)
+			}
+			entriesCount++
+		}
+		if entriesCount != len(values) {
+			return fmt.Errorf("ReadEntries count mismatch: got %v, want %v", entriesCount, len(values))
+		}
+
+		sum := 0
+		for _, v := range values {
+			sum += v
+		}
+		df.Output.Emit(ec, beam.Pair(k.Key, sum))
+		return nil
+	})
+}
+
+func TestStatefulParDo_OrderedList(t *testing.T) {
+	expected := []beam.KV[int, int]{{1, 3}, {1, 4}, {1, 6}, {2, 5}}
+
+	pr, err := beam.LaunchAndWait(context.TODO(), func(s *beam.Scope) error {
+		input := beam.Create(s, []beam.KV[int, int]{{1, 3}, {1, 1}, {1, 2}, {2, 5}}...)
+		ordered := beam.StatefulParDo(s, input, &StateOrderedListDoFn{})
+		beam.ParDo(s, ordered.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("LaunchAndWait produced an error: %v", err)
+	}
+	if got, want := pr.Counters["sink.Hit"], int64(len(expected)); got != want {
+		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
+	}
+}
+
+type StateOrderedListRangeDoFn struct {
+	MyList beam.StateOrderedList[int]
+
+	Output beam.PCol[beam.KV[int, int]]
+}
+
+func (df *StateOrderedListRangeDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
+	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
+		t := time.UnixMilli(int64(k.Value) * 100)
+		df.MyList.AppendWithTimestamp(ec, t, k.Value)
+
+		minT := time.UnixMilli(200)
+		maxT := time.UnixMilli(400)
+
+		var rangeSum int
+		for v := range df.MyList.ReadRange(ec, minT, maxT) {
+			rangeSum += v
+		}
+
+		for ts := range df.MyList.ReadRangeEntries(ec, minT, maxT) {
+			if ts.Before(minT) || !ts.Before(maxT) {
+				return fmt.Errorf("ReadRangeEntries yielded out of range timestamp: %v", ts)
+			}
+		}
+
+		df.Output.Emit(ec, beam.Pair(k.Key, rangeSum))
+		return nil
+	})
+}
+
+func TestStatefulParDo_OrderedListRange(t *testing.T) {
+	expected := []beam.KV[int, int]{{1, 0}, {1, 2}, {1, 5}, {1, 5}}
+
+	pr, err := beam.LaunchAndWait(context.TODO(), func(s *beam.Scope) error {
+		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {1, 4}}...)
+		ranged := beam.StatefulParDo(s, input, &StateOrderedListRangeDoFn{})
+		beam.ParDo(s, ranged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("LaunchAndWait produced an error: %v", err)
+	}
+	if got, want := pr.Counters["sink.Hit"], int64(len(expected)); got != want {
+		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
+	}
+}
+
+type StateOrderedListClearDoFn struct {
+	MyList beam.StateOrderedList[int]
+
+	Output beam.PCol[beam.KV[int, int]]
+}
+
+func (df *StateOrderedListClearDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
+	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
+		df.MyList.Append(ec, k.Value)
+
+		var sum int
+		for v := range df.MyList.Read(ec) {
+			sum += v
+		}
+		df.Output.Emit(ec, beam.Pair(k.Key, sum))
+		if sum >= 10 {
+			df.MyList.Clear(ec)
+		}
+		return nil
+	})
+}
+
+func TestStatefulParDo_OrderedListClear(t *testing.T) {
+	expected := []beam.KV[int, int]{{1, 5}, {1, 15}, {1, 20}}
+
+	pr, err := beam.LaunchAndWait(context.TODO(), func(s *beam.Scope) error {
+		input := beam.Create(s, []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 20}}...)
+		cleared := beam.StatefulParDo(s, input, &StateOrderedListClearDoFn{})
+		beam.ParDo(s, cleared.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {

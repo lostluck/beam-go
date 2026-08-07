@@ -1096,7 +1096,7 @@ func (st *StateMultiMap[K, V]) All(ec ElmC) iter.Seq2[K, V] {
 	}
 }
 
-// StateOrderedList represents a sorted list of values, ordered by event time.
+// StateOrderedList represents a sorted list of values, ordered by event time,
 // associated with the embedded DoFn, the element's window, and a key.
 type StateOrderedList[E Element] struct {
 	state
@@ -1137,7 +1137,6 @@ func (st *StateOrderedList[E]) initialize(stb *stateInitBase, stateID, transform
 }
 
 func (st *StateOrderedList[E]) toProtoParts(params translateParams) *pipepb.StateSpec {
-	// TODO: Do the correct coder, including the event time in the encoding.
 	coderID := addCoder[E](params.InternedCoders, params.Comps.GetCoders())
 	return &pipepb.StateSpec{
 		Spec: &pipepb.StateSpec_OrderedListSpec{
@@ -1149,6 +1148,162 @@ func (st *StateOrderedList[E]) toProtoParts(params translateParams) *pipepb.Stat
 			Urn: urnBagUserState,
 		},
 	}
+}
+
+func (st *StateOrderedList[E]) persist() error {
+	for key, entry := range st.cache.Iter() {
+		if !entry.valid && !entry.cleared {
+			continue
+		}
+
+		if entry.cleared {
+			c := st.init.Clearer([]byte(key.k), []byte(key.w))
+			c.Write(nil)
+		}
+
+		if !entry.valid || len(entry.fresh) == 0 {
+			continue
+		}
+
+		slices.SortStableFunc(entry.fresh, func(a, b orderedEntry[E]) int {
+			return a.EventTime.Compare(b.EventTime)
+		})
+
+		w := st.init.Appender([]byte(key.k), []byte(key.w))
+		enc := coders.NewEncoder()
+		for _, e := range entry.fresh {
+			enc.Timestamp(e.EventTime)
+			st.coder.Encode(enc, e.Val)
+		}
+		if _, err := w.Write(enc.Data()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Append adds a value using the current element context's event time.
+func (st *StateOrderedList[E]) Append(ec ElmC, val E) {
+	st.AppendWithTimestamp(ec, ec.EventTime(), val)
+}
+
+// AppendWithTimestamp adds a value with an explicit event time.
+func (st *StateOrderedList[E]) AppendWithTimestamp(ec ElmC, eventTime time.Time, val E) {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	entry.fresh = append(entry.fresh, orderedEntry[E]{EventTime: eventTime, Val: val})
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+}
+
+// Clear removes all elements from the ordered list for this key and window.
+func (st *StateOrderedList[E]) Clear(ec ElmC) {
+	st.cache.Clear(ec.keyBytes, ec.winBytes)
+}
+
+func (st *StateOrderedList[E]) getMergedEntries(ec ElmC) []orderedEntry[E] {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if !entry.valid {
+		if !entry.cleared && !entry.loaded {
+			r := st.init.Reader([]byte(ec.keyBytes), []byte(ec.winBytes))
+			for ts, val := range iterClosureWithTimestampCoder(st.coder, r) {
+				entry.runner = append(entry.runner, orderedEntry[E]{EventTime: ts, Val: val})
+			}
+		}
+		entry.loaded = true
+		entry.valid = true
+		st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+	}
+
+	if len(entry.fresh) == 0 {
+		return entry.runner
+	}
+	slices.SortStableFunc(entry.fresh, func(a, b orderedEntry[E]) int {
+		return a.EventTime.Compare(b.EventTime)
+	})
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+
+	if len(entry.runner) == 0 {
+		return entry.fresh
+	}
+
+	merged := make([]orderedEntry[E], 0, len(entry.runner)+len(entry.fresh))
+	i, j := 0, 0
+	for i < len(entry.runner) && j < len(entry.fresh) {
+		if entry.fresh[j].EventTime.Before(entry.runner[i].EventTime) {
+			merged = append(merged, entry.fresh[j])
+			j++
+		} else {
+			merged = append(merged, entry.runner[i])
+			i++
+		}
+	}
+	merged = append(merged, entry.runner[i:]...)
+	merged = append(merged, entry.fresh[j:]...)
+	return merged
+}
+
+// ReadEntries returns an iterator over (EventTime, Element) pairs sorted by event time.
+func (st *StateOrderedList[E]) ReadEntries(ec ElmC) iter.Seq2[time.Time, E] {
+	entries := st.getMergedEntries(ec)
+	return func(yield func(time.Time, E) bool) {
+		for _, e := range entries {
+			if !yield(e.EventTime, e.Val) {
+				return
+			}
+		}
+	}
+}
+
+// Read returns an iterator over elements sorted by event time.
+func (st *StateOrderedList[E]) Read(ec ElmC) iter.Seq[E] {
+	entries := st.getMergedEntries(ec)
+	return func(yield func(E) bool) {
+		for _, e := range entries {
+			if !yield(e.Val) {
+				return
+			}
+		}
+	}
+}
+
+// ReadRangeEntries returns an iterator over (EventTime, Element) pairs within [minTime, maxTime) sorted by event time.
+func (st *StateOrderedList[E]) ReadRangeEntries(ec ElmC, minTime, maxTime time.Time) iter.Seq2[time.Time, E] {
+	entries := st.getMergedEntries(ec)
+	return func(yield func(time.Time, E) bool) {
+		for _, e := range entries {
+			if !minTime.IsZero() && e.EventTime.Before(minTime) {
+				continue
+			}
+			if !maxTime.IsZero() && !e.EventTime.Before(maxTime) {
+				break
+			}
+			if !yield(e.EventTime, e.Val) {
+				return
+			}
+		}
+	}
+}
+
+// ReadRange returns an iterator over elements within [minTime, maxTime) sorted by event time.
+func (st *StateOrderedList[E]) ReadRange(ec ElmC, minTime, maxTime time.Time) iter.Seq[E] {
+	entries := st.getMergedEntries(ec)
+	return func(yield func(E) bool) {
+		for _, e := range entries {
+			if !minTime.IsZero() && e.EventTime.Before(minTime) {
+				continue
+			}
+			if !maxTime.IsZero() && !e.EventTime.Before(maxTime) {
+				break
+			}
+			if !yield(e.Val) {
+				return
+			}
+		}
+	}
+}
+
+// All returns an iterator over all elements sorted by event time.
+func (st *StateOrderedList[E]) All(ec ElmC) iter.Seq[E] {
+	return st.Read(ec)
 }
 
 // AsStateCombining uses a [Combiner] to produce a combining state.

@@ -3,6 +3,7 @@ package beam
 import (
 	"io"
 	"iter"
+	"time"
 
 	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/internal/harness"
@@ -47,6 +48,29 @@ func iterClosureWithCoder[E Element](c coders.Coder[E], r harness.NextBuffer) it
 			dec := coders.NewDecoder(buf)
 			for !dec.Empty() {
 				if !perElm(c.Decode(dec)) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func iterClosureWithTimestampCoder[E Element](c coders.Coder[E], r harness.NextBuffer) iter.Seq2[time.Time, E] {
+	return func(perElm func(ts time.Time, elm E) bool) {
+		defer r.Close()
+		for {
+			buf, err := r.NextBuf()
+			if err != nil {
+				if err == io.EOF {
+					return
+				}
+				panic(err)
+			}
+			dec := coders.NewDecoder(buf)
+			for !dec.Empty() {
+				ts := dec.Timestamp()
+				val := c.Decode(dec)
+				if !perElm(ts, val) {
 					return
 				}
 			}

@@ -29,8 +29,10 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // TODO: Allow configuration of port/ return of auto selected ports.
@@ -161,12 +163,18 @@ func (h *Handle) Addr() string {
 }
 
 func pickPort() string {
-	lis, err := net.Listen("tcp", ":0")
+	l, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
-		panic(fmt.Errorf("couldn't select random port to listen to: %w", err))
+		lis, err2 := net.Listen("tcp", "127.0.0.1:0")
+		if err2 != nil {
+			panic(fmt.Errorf("couldn't select random port to listen to: %w", err2))
+		}
+		defer lis.Close()
+		_, port, _ := net.SplitHostPort(lis.Addr().String())
+		return port
 	}
-	defer lis.Close()
-	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	defer l.Close()
+	_, port, _ := net.SplitHostPort(l.LocalAddr().String())
 	return port
 }
 
@@ -220,18 +228,40 @@ func Start(ctx context.Context, opts Options) (*Handle, error) {
 		"--idle_shutdown_timeout=5s",
 		"--serve_http=false",
 	}
-	port := opts.Port
-	if port == "" {
-		port = pickPort()
-	}
-	args = append(args, "--job_port="+port)
+	var cmd *exec.Cmd
+	var port string
+	var startErr error
 
-	cmd := exec.Command(bin, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("couldn't start command %q: %w", bin, err)
+	for range 5 {
+		port = opts.Port
+		if port == "" {
+			port = pickPort()
+		}
+		cmdArgs := append(slices.Clone(args), "--job_port="+port)
+		cmd = exec.Command(bin, cmdArgs...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			startErr = err
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+
+		// Wait briefly to confirm server didn't immediately crash due to port bind error
+		time.Sleep(50 * time.Millisecond)
+		if cmd.ProcessState != nil && !cmd.ProcessState.Success() {
+			startErr = fmt.Errorf("prism exited immediately")
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		startErr = nil
+		break
 	}
+
+	if startErr != nil {
+		return nil, fmt.Errorf("couldn't start command %q: %w", bin, startErr)
+	}
+
 	handle := &Handle{
 		addr: "localhost:" + port,
 		cancelFn: func() {
@@ -243,7 +273,7 @@ func Start(ctx context.Context, opts Options) (*Handle, error) {
 		state, err := cmd.Process.Wait()
 		cacheMu.Lock()
 		defer cacheMu.Unlock()
-		if err != nil {
+		if err != nil && state != nil && !state.Success() {
 			fmt.Printf("command %v returned: state %v, err %v\n", cmd.Args, state, err)
 		}
 		delete(cache, opts)
