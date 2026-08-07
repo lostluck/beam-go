@@ -922,7 +922,6 @@ func (st *StateMultiMap[K, V]) initialize(stb *stateInitBase, stateID, transform
 		stateInitBase: stb,
 	}
 	st.cache = newStateCache[map[K]stateCacheEntry[[]V]]()
-	panic("unimplemented")
 }
 
 func (st *StateMultiMap[K, V]) toProtoParts(params translateParams) *pipepb.StateSpec {
@@ -936,8 +935,164 @@ func (st *StateMultiMap[K, V]) toProtoParts(params translateParams) *pipepb.Stat
 			},
 		},
 		Protocol: &pipepb.FunctionSpec{
-			Urn: urnBagUserState,
+			Urn: urnMultiMapUserState,
 		},
+	}
+}
+
+func (st *StateMultiMap[K, V]) persist() error {
+	for key, entry := range st.cache.Iter() {
+		if !entry.valid && !entry.cleared {
+			continue
+		}
+
+		if entry.cleared {
+			c := st.initKeys.Clearer([]byte(key.k), []byte(key.w))
+			c.Write(nil)
+		}
+
+		if !entry.valid {
+			continue
+		}
+
+		for userKey, userEntry := range entry.fresh {
+			if !userEntry.valid && !userEntry.cleared {
+				continue
+			}
+			enc := coders.NewEncoder()
+			st.keyCoder.Encode(enc, userKey)
+			userKeyBytes := enc.Data()
+			if userEntry.cleared {
+				c := st.initVals.Clearer([]byte(key.k), []byte(key.w), userKeyBytes)
+				c.Write(nil)
+			}
+			if userEntry.valid && len(userEntry.fresh) > 0 {
+				w := st.initVals.Appender([]byte(key.k), []byte(key.w), userKeyBytes)
+				valEnc := coders.NewEncoder()
+				for _, v := range userEntry.fresh {
+					st.valCoder.Encode(valEnc, v)
+				}
+				if _, err := w.Write(valEnc.Data()); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Clear empties the entire multimap state.
+func (st *StateMultiMap[K, V]) Clear(ec ElmC) {
+	st.cache.Clear(ec.keyBytes, ec.winBytes)
+}
+
+// Remove clears all values for the given map key.
+func (st *StateMultiMap[K, V]) Remove(ec ElmC, mapKey K) {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if !entry.valid {
+		entry.fresh = map[K]stateCacheEntry[[]V]{}
+	}
+	entry.fresh[mapKey] = stateCacheEntry[[]V]{valid: true, cleared: true}
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+}
+
+// Append adds a value for the given map key.
+func (st *StateMultiMap[K, V]) Append(ec ElmC, mapKey K, mapVal V) {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if !entry.valid {
+		entry.fresh = map[K]stateCacheEntry[[]V]{}
+	}
+	uEntry := entry.fresh[mapKey]
+	uEntry.fresh = append(uEntry.fresh, mapVal)
+	uEntry.valid = true
+	entry.fresh[mapKey] = uEntry
+	st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+}
+
+// Keys returns all map keys associated with this element's key and window.
+func (st *StateMultiMap[K, V]) Keys(ec ElmC) iter.Seq[K] {
+	return func(yield func(K) bool) {
+		entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+		seen := map[K]bool{}
+
+		if !entry.cleared {
+			r := st.initKeys.Reader([]byte(ec.keyBytes), []byte(ec.winBytes))
+			for k := range iterClosureWithCoder(st.keyCoder, r) {
+				seen[k] = true
+				if entry.valid {
+					if uEntry, ok := entry.fresh[k]; ok {
+						if uEntry.valid && (len(uEntry.fresh) > 0 || len(uEntry.runner) > 0 || !uEntry.cleared) {
+							if !yield(k) {
+								return
+							}
+							continue
+						}
+						if uEntry.cleared && len(uEntry.fresh) == 0 {
+							continue
+						}
+					}
+				}
+				if !yield(k) {
+					return
+				}
+			}
+		}
+
+		if entry.valid {
+			for k, uEntry := range entry.fresh {
+				if seen[k] {
+					continue
+				}
+				if uEntry.valid && (len(uEntry.fresh) > 0 || len(uEntry.runner) > 0 || !uEntry.cleared) {
+					if !yield(k) {
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// Values returns an iterator for all values associated with the map key.
+func (st *StateMultiMap[K, V]) Values(ec ElmC, mapKey K) iter.Seq[V] {
+	entry := st.cache.Get(ec.keyBytes, ec.winBytes)
+	if !entry.valid {
+		entry.fresh = map[K]stateCacheEntry[[]V]{}
+	}
+	uEntry := entry.fresh[mapKey]
+	if !uEntry.loaded {
+		if !entry.cleared && !uEntry.cleared {
+			enc := coders.NewEncoder()
+			st.keyCoder.Encode(enc, mapKey)
+			r := st.initVals.Reader([]byte(ec.keyBytes), []byte(ec.winBytes), enc.Data())
+			for val := range iterClosureWithCoder(st.valCoder, r) {
+				uEntry.runner = append(uEntry.runner, val)
+			}
+		}
+		uEntry.loaded = true
+		uEntry.valid = true
+		entry.fresh[mapKey] = uEntry
+		entry.valid = true
+		st.cache.Put(ec.keyBytes, ec.winBytes, entry)
+	}
+	return concat(slices.Values(uEntry.runner), slices.Values(uEntry.fresh))
+}
+
+// Get returns an iterator for all values associated with the map key.
+func (st *StateMultiMap[K, V]) Get(ec ElmC, mapKey K) iter.Seq[V] {
+	return st.Values(ec, mapKey)
+}
+
+// All returns an iterator over all key-value pairs in the multimap.
+func (st *StateMultiMap[K, V]) All(ec ElmC) iter.Seq2[K, V] {
+	return func(yield func(K, V) bool) {
+		for k := range st.Keys(ec) {
+			for v := range st.Values(ec, k) {
+				if !yield(k, v) {
+					return
+				}
+			}
+		}
 	}
 }
 
