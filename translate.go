@@ -74,6 +74,9 @@ func jsonDoFnMarshallers() json.Options {
 				enc.WriteToken(jsontext.EndObject)
 				return nil
 			}),
+			json.MarshalToFunc(func(enc *jsontext.Encoder, d time.Duration) error {
+				return enc.WriteToken(jsontext.String(d.String()))
+			}),
 			// No special handling for marshalling the DoFn otherwise.
 		))
 }
@@ -81,6 +84,31 @@ func jsonDoFnMarshallers() json.Options {
 func jsonDoFnUnmarshallers(typeReg map[string]reflect.Type, name string) json.Options {
 	return json.WithUnmarshalers(
 		json.JoinUnmarshalers(
+			// Handle time.
+			json.UnmarshalFromFunc(func(dec *jsontext.Decoder, val *time.Duration) error {
+				tok, err := dec.ReadToken()
+				if err != nil {
+					return err
+				}
+				switch tok.Kind() {
+				case '"':
+					d, err := time.ParseDuration(tok.String())
+					if err != nil {
+						return err
+					}
+					*val = d
+					return nil
+				case '0':
+					n, err := tok.Int()
+					if err != nil {
+						return err
+					}
+					*val = time.Duration(n)
+					return nil
+				default:
+					return fmt.Errorf("unexpected token for time.Duration: %v", tok)
+				}
+			}),
 			// Handle mixins by skipping the values.
 			json.UnmarshalFromFunc(func(dec *jsontext.Decoder, val bypassInterface) error {
 				return dec.SkipValue()
