@@ -17,12 +17,15 @@ package beam
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"io"
 	"math"
 	"testing"
 	"time"
 
 	"golang.org/x/exp/constraints"
+	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/internal/beamopts"
 )
 
@@ -467,5 +470,413 @@ func TestMultiplex(t *testing.T) {
 	}
 	if got, want := int(pr.Counters["sink2.Finished"]), 1; got != want {
 		t.Fatalf("finished2 didn't match bundle counter: got %v want %v", got, want)
+	}
+}
+
+func TestPair_And_ElmC(t *testing.T) {
+	p := Pair("k", 123)
+	if p.Key != "k" || p.Value != 123 {
+		t.Errorf("Pair = %+v", p)
+	}
+
+	now := time.Now()
+	ec := ElmC{elmContext: elmContext{eventTime: now}}
+	if ec.EventTime() != now {
+		t.Errorf("EventTime() = %v, want %v", ec.EventTime(), now)
+	}
+}
+
+func TestIter_All_And_MetaType(t *testing.T) {
+	items := []int{10, 20, 30}
+	idx := 0
+	it := Iter[int]{
+		source: func() (int, bool) {
+			if idx >= len(items) {
+				return 0, false
+			}
+			v := items[idx]
+			idx++
+			return v, true
+		},
+	}
+
+	var got []int
+	for v := range it.All() {
+		got = append(got, v)
+	}
+	if len(got) != 3 || got[0] != 10 || got[1] != 20 || got[2] != 30 {
+		t.Errorf("Iter.All() = %v, want [10, 20, 30]", got)
+	}
+
+	// Test early break
+	idx = 0
+	var early []int
+	for v := range it.All() {
+		early = append(early, v)
+		if len(early) == 1 {
+			break
+		}
+	}
+	if len(early) != 1 {
+		t.Errorf("Iter.All() early break failed: %v", early)
+	}
+
+	if !isMetaType(Iter[int]{}) {
+		t.Errorf("Iter[int] should be meta type")
+	}
+	if isMetaType(123) {
+		t.Errorf("int should not be meta type")
+	}
+}
+
+func TestScope_String(t *testing.T) {
+	root := &Scope{name: "root"}
+	child := &Scope{name: "child", parent: root}
+
+	tests := []struct {
+		name  string
+		scope *Scope
+		want  string
+	}{
+		{name: "nil_scope", scope: nil, want: ""},
+		{name: "root_scope", scope: root, want: "/root"},
+		{name: "child_scope", scope: child, want: "/root/child"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.scope.String(); got != tc.want {
+				t.Errorf("Scope(%s).String() = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConfiguration(t *testing.T) {
+	cfg := New()
+	if cfg == nil || cfg.pipelines == nil {
+		t.Fatalf("New() configuration invalid")
+	}
+
+	// Flags
+	cfg.Flags(flag.NewFlagSet("test", flag.ContinueOnError))
+	cfg.FromCommandLine()
+
+	// Load valid
+	cfg.Load("p1", func(s *Scope) error { return nil })
+
+	// Load nil expand
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("expected Load(nil) to panic")
+		}
+	}()
+	cfg.Load("pNil", nil)
+}
+
+func TestConfiguration_DuplicateLoad(t *testing.T) {
+	cfg := New()
+	cfg.Load("dup", func(s *Scope) error { return nil })
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("expected duplicate Load to panic")
+		}
+	}()
+	cfg.Load("dup", func(s *Scope) error { return nil })
+}
+
+func TestLauncher_Errors(t *testing.T) {
+	var emptyLauncher Launcher
+	_, err := emptyLauncher.Run(t.Context(), "pid")
+	if err == nil {
+		t.Errorf("expected error for empty launcher")
+	}
+
+	cfg := New()
+	cfg.Load("valid", func(s *Scope) error {
+		return fmt.Errorf("construction failure")
+	})
+	launcher := cfg.Ready(t.Context())
+
+	// Unregistered PID
+	_, err = launcher.Run(t.Context(), "unregistered")
+	if err == nil {
+		t.Errorf("expected error for unregistered PID")
+	}
+
+	// Construction error
+	_, err = launcher.Run(t.Context(), "valid")
+	if err == nil {
+		t.Errorf("expected error for failing pipeline expansion")
+	}
+}
+
+func TestExtractEnv(t *testing.T) {
+	ctx := t.Context()
+
+	tests := []struct {
+		name    string
+		flags   *envFlags
+		wantUrn string
+		wantErr bool
+	}{
+		{
+			name:    "loopback",
+			flags:   &envFlags{EnvironmentType: "LOOPBACK"},
+			wantUrn: "beam:env:external:v1",
+			wantErr: false,
+		},
+		{
+			name:    "docker_default",
+			flags:   &envFlags{EnvironmentType: "DOCKER"},
+			wantUrn: "beam:env:docker:v1",
+			wantErr: false,
+		},
+		{
+			name:    "docker_custom",
+			flags:   &envFlags{EnvironmentType: "DOCKER", EnvironmentConfig: "custom-image:v1"},
+			wantUrn: "beam:env:docker:v1",
+			wantErr: false,
+		},
+		{
+			name: "process_valid",
+			flags: &envFlags{
+				EnvironmentType:   "PROCESS",
+				EnvironmentConfig: `{"os": "linux", "arch": "amd64", "command": "echo"}`,
+			},
+			wantUrn: "beam:env:process:v1",
+			wantErr: false,
+		},
+		{
+			name: "process_invalid_json",
+			flags: &envFlags{
+				EnvironmentType:   "PROCESS",
+				EnvironmentConfig: `invalid-json`,
+			},
+			wantErr: true,
+		},
+		{
+			name:    "unknown_type",
+			flags:   &envFlags{EnvironmentType: "UNKNOWN"},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env, err := extractEnv(ctx, tc.flags, nil, nil)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("extractEnv(%+v) error = %v, wantErr = %v", tc.flags, err, tc.wantErr)
+			}
+			if !tc.wantErr && env.Urn != tc.wantUrn {
+				t.Errorf("extractEnv(%+v).Urn = %q, want %q", tc.flags, env.Urn, tc.wantUrn)
+			}
+		})
+	}
+}
+
+func TestOffsetRange_And_ORTracker(t *testing.T) {
+	r := OffsetRange{Min: 10, Max: 50}
+	if r.Start() != 10 || r.End() != 50 {
+		t.Errorf("Start/End failed: %+v", r)
+	}
+	if !r.Bounded() {
+		t.Errorf("expected Bounded() = true")
+	}
+	unbounded := OffsetRange{Min: 0, Max: math.MaxInt64}
+	if unbounded.Bounded() {
+		t.Errorf("expected Bounded() = false for MaxInt64")
+	}
+
+	tracker := &ORTracker{Rest: r}
+	if tracker.Size(r) != 40.0 {
+		t.Errorf("Size = %v, want 40", tracker.Size(r))
+	}
+	if tracker.GetRestriction() != r {
+		t.Errorf("GetRestriction = %+v, want %+v", tracker.GetRestriction(), r)
+	}
+
+	// TryClaim below Min
+	if tracker.TryClaim(5) {
+		t.Errorf("TryClaim(5) should return false for Min=10")
+	}
+	if tracker.GetError() == nil {
+		t.Errorf("expected error after claiming below Min")
+	}
+
+	// TryClaim after stopped
+	if tracker.TryClaim(15) {
+		t.Errorf("TryClaim after stopped should return false")
+	}
+
+	// Fresh tracker
+	tracker = &ORTracker{Rest: r}
+	if !tracker.TryClaim(10) {
+		t.Errorf("TryClaim(10) failed")
+	}
+	// TryClaim non-monotonic (<= claimed)
+	if tracker.TryClaim(10) {
+		t.Errorf("TryClaim(10) again should fail")
+	}
+
+	// Another fresh tracker
+	tracker = &ORTracker{Rest: r}
+	if !tracker.TryClaim(15) {
+		t.Errorf("TryClaim(15) failed")
+	}
+	if tracker.IsDone() {
+		t.Errorf("tracker should not be done yet")
+	}
+
+	done, remaining := tracker.GetProgress()
+	if done != 6 || remaining != 34 {
+		t.Errorf("GetProgress = (%v, %v), want (6, 34)", done, remaining)
+	}
+
+	// TrySplit negative fraction (clamped to 0)
+	prim, res, err := tracker.TrySplit(-0.5)
+	if err != nil {
+		t.Errorf("TrySplit(-0.5) error: %v", err)
+	}
+	if prim.Max != 16 || res.Min != 16 {
+		t.Errorf("TrySplit(-0.5) got prim=%+v, res=%+v", prim, res)
+	}
+
+	// TrySplit fraction > 1 (clamped to 1)
+	tracker2 := &ORTracker{Rest: OffsetRange{Min: 0, Max: 100}}
+	tracker2.TryClaim(0)
+	prim2, res2, err := tracker2.TrySplit(1.5)
+	if err != nil || res2 != (OffsetRange{}) {
+		t.Errorf("TrySplit(1.5) got prim=%+v, res=%+v, err=%v", prim2, res2, err)
+	}
+
+	// TryClaim >= Max
+	tracker3 := &ORTracker{Rest: OffsetRange{Min: 0, Max: 10}}
+	if tracker3.TryClaim(10) {
+		t.Errorf("TryClaim(10) for Max=10 should return false")
+	}
+	if !tracker3.IsDone() {
+		t.Errorf("tracker3 should be done after claiming >= Max")
+	}
+}
+
+type mockNextBuf struct {
+	bufs [][]byte
+}
+
+func (m *mockNextBuf) NextBuf() ([]byte, error) {
+	if len(m.bufs) == 0 {
+		return nil, io.EOF
+	}
+	b := m.bufs[0]
+	m.bufs = m.bufs[1:]
+	return b, nil
+}
+
+func (m *mockNextBuf) Reset() error { return nil }
+func (m *mockNextBuf) Close() error { return nil }
+
+func TestUtilSeq_Concat_And_Closures(t *testing.T) {
+	it1 := func(yield func(int) bool) {
+		yield(1)
+		yield(2)
+	}
+	it2 := func(yield func(int) bool) {
+		yield(3)
+	}
+
+	cat := concat(it1, nil, it2)
+	var got []int
+	for v := range cat {
+		got = append(got, v)
+	}
+	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Errorf("concat got %v, want [1, 2, 3]", got)
+	}
+
+	// Early break
+	var early []int
+	for v := range cat {
+		early = append(early, v)
+		if len(early) == 2 {
+			break
+		}
+	}
+	if len(early) != 2 {
+		t.Errorf("concat early break got %v", early)
+	}
+
+	// iterClosure with coder
+	enc := coders.NewEncoder()
+	coders.MakeCoder[int]().Encode(enc, 42)
+	coders.MakeCoder[int]().Encode(enc, 99)
+
+	mb := &mockNextBuf{bufs: [][]byte{enc.Data()}}
+	var closureVals []int
+	for v := range iterClosure[int](mb) {
+		closureVals = append(closureVals, v)
+	}
+	if len(closureVals) != 2 || closureVals[0] != 42 || closureVals[1] != 99 {
+		t.Errorf("iterClosure got %v, want [42, 99]", closureVals)
+	}
+
+	// iterClosureWithTimestampCoder
+	now := time.UnixMilli(12345000)
+	enc2 := coders.NewEncoder()
+	enc2.Timestamp(now)
+	coders.MakeCoder[string]().Encode(enc2, "timed")
+
+	mb2 := &mockNextBuf{bufs: [][]byte{enc2.Data()}}
+	var tsVals []string
+	for ts, v := range iterClosureWithTimestampCoder(coders.MakeCoder[string](), mb2) {
+		if ts.UnixMilli() != now.UnixMilli() {
+			t.Errorf("ts = %v, want %v", ts, now)
+		}
+		tsVals = append(tsVals, v)
+	}
+	if len(tsVals) != 1 || tsVals[0] != "timed" {
+		t.Errorf("iterClosureWithTimestampCoder got %v", tsVals)
+	}
+}
+
+func TestEdgeFlatten_Methods(t *testing.T) {
+	ef := &edgeFlatten[int]{
+		index:     edgeIndex(1),
+		transform: "t_flatten",
+		ins:       []nodeIndex{2, 3},
+		output:    nodeIndex(4),
+	}
+
+	if ef.protoID() != "t_flatten" {
+		t.Errorf("protoID = %v, want t_flatten", ef.protoID())
+	}
+	if ef.edgeID() != edgeIndex(1) {
+		t.Errorf("edgeID = %v, want 1", ef.edgeID())
+	}
+
+	ins := ef.inputs()
+	if len(ins) != 2 || ins["i0"] != nodeIndex(2) || ins["i1"] != nodeIndex(3) {
+		t.Errorf("inputs = %+v", ins)
+	}
+
+	outs := ef.outputs()
+	if len(outs) != 1 || outs["Output"] != nodeIndex(4) {
+		t.Errorf("outputs = %+v", outs)
+	}
+
+	spec, envID, name := ef.toProtoParts(translateParams{})
+	if spec.Urn != "beam:transform:flatten:v1" || envID != "" || name != "Flatten" {
+		t.Errorf("toProtoParts = (%v, %v, %v)", spec, envID, name)
+	}
+
+	tr, inst, procs, first := ef.flatten()
+	if tr != "t_flatten" || inst == nil || len(procs) != 1 || !first {
+		t.Errorf("flatten() first call failed: (%v, %v, %v, %v)", tr, inst, procs, first)
+	}
+
+	// Second call should return first = false
+	_, _, _, first2 := ef.flatten()
+	if first2 {
+		t.Errorf("second call to flatten() should have first = false")
 	}
 }

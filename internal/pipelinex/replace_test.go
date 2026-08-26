@@ -425,3 +425,75 @@ func buildEnvironment(t *testing.T, containerImg string) *pipepb.Environment {
 	env.Payload = plb
 	return env
 }
+
+func TestUpdateAndNormalize(t *testing.T) {
+	p := &pipepb.Pipeline{
+		Components: &pipepb.Components{
+			Transforms: map[string]*pipepb.PTransform{
+				"t1": {
+					UniqueName: "Transform1",
+					Outputs:    map[string]string{"out": "pcol1"},
+				},
+				"t2": {
+					UniqueName: "Transform2",
+					Inputs:     map[string]string{"in": "pcol1"},
+				},
+			},
+			Pcollections: map[string]*pipepb.PCollection{
+				"pcol1": {UniqueName: "PCol1"},
+			},
+		},
+	}
+
+	values := &pipepb.Components{
+		Transforms: map[string]*pipepb.PTransform{
+			"t3": {
+				UniqueName: "Transform3",
+			},
+		},
+	}
+
+	updated, err := Update(p, values)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if len(updated.Components.Transforms) != 3 {
+		t.Errorf("len(Transforms) = %d, want 3", len(updated.Components.Transforms))
+	}
+
+	// Test Normalize empty pipeline error
+	_, err = Normalize(&pipepb.Pipeline{})
+	if err == nil {
+		t.Errorf("expected error normalizing empty pipeline")
+	}
+
+	// Test Normalize with IdempotentNormalize = false
+	IdempotentNormalize = false
+	defer func() { IdempotentNormalize = true }()
+	normLegacy, err := Normalize(p)
+	if err != nil || len(normLegacy.Components.Transforms) != 2 {
+		t.Errorf("legacy Normalize failed: %v", err)
+	}
+}
+
+func TestTrimCoders(t *testing.T) {
+	coders := map[string]*pipepb.Coder{
+		"c1": {
+			ComponentCoderIds: []string{"c2"},
+		},
+		"c2": {
+			ComponentCoderIds: []string{"c3"},
+		},
+		"c3": {},
+		"c4": {}, // Unreferenced
+	}
+
+	trimmed := TrimCoders(coders, "c1")
+	if len(trimmed) != 3 {
+		t.Errorf("TrimCoders len = %d, want 3", len(trimmed))
+	}
+	if trimmed["c4"] != nil {
+		t.Errorf("unreferenced c4 should have been trimmed")
+	}
+}
+

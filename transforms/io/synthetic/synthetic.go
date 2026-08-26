@@ -85,7 +85,7 @@ type syntheticSDFStep[RF beam.RestrictionFactory[E, beam.OffsetRange, int64], T 
 	InitialSplittingNumBundles   uint
 	InitialSplittingUnevenChunks bool
 
-	MakeTracker func(beam.OffsetRange) T
+	MakeTracker func(beam.OffsetRange) T `json:"-"`
 
 	beam.OnBundleFinish
 	Output beam.PCol[E]
@@ -104,8 +104,16 @@ func (fn *syntheticSDFStep[RF, T, E]) ProcessBundle(dfc *beam.DFC[E]) error {
 		return nil
 	})
 
+	makeTracker := fn.MakeTracker
+	if makeTracker == nil {
+		makeTracker = func(r beam.OffsetRange) T {
+			var t any = &beam.ORTracker{Rest: r}
+			return t.(T)
+		}
+	}
+
 	return fn.BoundedSDF.Process(dfc,
-		fn.MakeTracker,
+		makeTracker,
 		func(ec beam.ElmC, e E, or beam.OffsetRange, tc beam.TryClaim[int64]) error {
 			filterElement := false
 			if fn.OutputFilterRatio > 0 {
@@ -146,9 +154,14 @@ func (syntheticSourceRestrictionFactory) InitialSplit(cfg SourceConfig, rest bea
 	case "zipf":
 		panic("unimplemented")
 	default:
-		elmsPerBundle := max(1, cfg.NumRecords/cfg.InitialSplitNumBundles)
-		if cfg.InitialSplitNumBundles < 1 {
+		var elmsPerBundle int
+		if cfg.InitialSplitNumBundles >= 1 {
+			elmsPerBundle = max(1, cfg.NumRecords/cfg.InitialSplitNumBundles)
+		} else {
 			elmsPerBundle = int(math.Ceil(float64(cfg.InitialSplitDesiredBundleSize) / float64(elmSize)))
+		}
+		if elmsPerBundle < 1 {
+			elmsPerBundle = 1
 		}
 		return func(yield func(beam.OffsetRange, float64) bool) {
 			for start := rest.Min; start < rest.Max; start += int64(elmsPerBundle) {

@@ -775,4 +775,79 @@ func TestStatefulParDo_OrderedListClear(t *testing.T) {
 	}
 }
 
+type StateMapValuesDoFn struct {
+	MyMap beam.StateMap[string, int]
+
+	Output beam.PCol[beam.KV[int, int]]
+}
+
+func (df *StateMapValuesDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
+	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
+		mapKey := fmt.Sprint(k.Key)
+		df.MyMap.Set(ec, mapKey, k.Value)
+
+		var total int
+		for v := range df.MyMap.Values(ec, mapKey) {
+			total += v
+		}
+		df.Output.Emit(ec, beam.Pair(k.Key, total))
+		return nil
+	})
+}
+
+func TestStatefulParDo_MapValues(t *testing.T) {
+	expected := []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 30}}
+
+	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
+		input := beam.Create(s, []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 30}}...)
+		mapped := beam.StatefulParDo(s, input, &StateMapValuesDoFn{})
+		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("LaunchAndWait produced an error: %v", err)
+	}
+	if got, want := pr.Counters["sink.Hit"], int64(len(expected)); got != want {
+		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
+	}
+}
+
+type StateMultiMapValuesDoFn struct {
+	MyMultiMap beam.StateMultiMap[string, int]
+
+	Output beam.PCol[beam.KV[int, int]]
+}
+
+func (df *StateMultiMapValuesDoFn) ProcessBundle(dfc *beam.DFC[beam.KV[int, int]]) error {
+	return dfc.Process(func(ec beam.ElmC, k beam.KV[int, int]) error {
+		mapKey := fmt.Sprint(k.Key)
+		df.MyMultiMap.Append(ec, mapKey, k.Value)
+
+		var total int
+		for v := range df.MyMultiMap.Values(ec, mapKey) {
+			total += v
+		}
+		df.Output.Emit(ec, beam.Pair(k.Key, total))
+		return nil
+	})
+}
+
+func TestStatefulParDo_MultiMapValues(t *testing.T) {
+	expected := []beam.KV[int, int]{{1, 10}, {1, 30}, {2, 5}}
+
+	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
+		input := beam.Create(s, []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 5}}...)
+		mapped := beam.StatefulParDo(s, input, &StateMultiMapValuesDoFn{})
+		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("LaunchAndWait produced an error: %v", err)
+	}
+	if got, want := pr.Counters["sink.Hit"], int64(len(expected)); got != want {
+		t.Errorf("sink.Hit didn't match bench number: got %v want %v", got, want)
+	}
+}
+
+
 

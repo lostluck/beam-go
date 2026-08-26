@@ -147,3 +147,119 @@ func TestMakeCoder(t *testing.T) {
 		})
 	}
 }
+
+type testBinaryCustom struct {
+	text string
+}
+
+func (c *testBinaryCustom) MarshalBinary() ([]byte, error) {
+	return []byte(c.text), nil
+}
+
+func (c *testBinaryCustom) UnmarshalBinary(data []byte) error {
+	c.text = string(data)
+	return nil
+}
+
+type testWindow struct {
+	val int
+}
+
+func (w testWindow) Encode(enc *Encoder) {
+	enc.Int(w.val)
+}
+
+func (w testWindow) decode(dec *Decoder) {
+	_ = dec.Int()
+}
+
+func (w testWindow) String() string {
+	return "testWindow"
+}
+
+func TestCoders_SpecialTypes(t *testing.T) {
+	// BinaryUnmarshaler
+	orig := &testBinaryCustom{text: "custom-binary"}
+	data, _ := orig.MarshalBinary()
+	enc := NewEncoder()
+	enc.Bytes(data)
+	dec := NewDecoder(enc.Data())
+	target := &testBinaryCustom{}
+	dec.DecodeBinaryUnmarshaler(target)
+	if target.text != "custom-binary" {
+		t.Errorf("BinaryUnmarshaler got %v, want custom-binary", target.text)
+	}
+
+	// GlobalWindow
+	enc.Reset(0)
+	enc.GlobalWindow()
+	dec = NewDecoder(enc.Data())
+	dec.GlobalWindow()
+	if !dec.Empty() {
+		t.Errorf("expected decoder to be empty after GlobalWindow")
+	}
+
+	// IntervalWindow & Nullable
+	enc.Reset(0)
+	enc.IntervalWindow(time.UnixMilli(1000), time.Second)
+	enc.Nullable(true)
+
+	// Pane
+	enc.Reset(0)
+	enc.Pane(PaneInfo{})
+	dec = NewDecoder(enc.Data())
+	_ = dec.Pane()
+
+	// WindowedValueHeader decoding
+	enc.Reset(0)
+	now := time.UnixMilli(987654000)
+	enc.Timestamp(now)
+	enc.Uint32(1)
+	enc.Int(123)
+	enc.Pane(PaneInfo{})
+	dec = NewDecoder(enc.Data())
+	gotTime, gotWins, _ := DecodeWindowedValueHeader[testWindow](dec)
+	if gotTime.UnixMilli() != now.UnixMilli() {
+		t.Errorf("WindowedValueHeader time = %v, want %v", gotTime, now)
+	}
+	if len(gotWins) != 1 {
+		t.Errorf("gotWins = %+v, want 1 window", gotWins)
+	}
+
+	// Byte / StringUtf8
+	enc.Reset(0)
+	enc.Byte(byte(42))
+	enc.StringUtf8("hello utf8")
+	dec = NewDecoder(enc.Data())
+	if b := dec.Byte(); b != byte(42) {
+		t.Errorf("dec.Byte = %v, want 42", b)
+	}
+	if s := dec.StringUtf8(); s != "hello utf8" {
+		t.Errorf("dec.StringUtf8 = %v, want hello utf8", s)
+	}
+}
+
+func TestCoders_Panics(t *testing.T) {
+	// Bool invalid byte panic
+	dec := NewDecoder([]byte{2})
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("expected Bool(2) to panic")
+			}
+		}()
+		_ = dec.Bool()
+	}()
+
+	// Read past length panic
+	dec2 := NewDecoder([]byte{1, 2})
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("expected Read(5) on 2-byte slice to panic")
+			}
+		}()
+		_ = dec2.Read(5)
+	}()
+}
+
