@@ -130,7 +130,9 @@ func buildRowCoder[C rowStructCoderBuilder](c C, rt reflect.Type) C {
 		})
 		c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
 			t := time.Time{}
-			t.UnmarshalText(dec.Bytes())
+			if err := t.UnmarshalText(dec.Bytes()); err != nil {
+				panic(makeDecodeError("error decoding time.Time: %w", err))
+			}
 			rv.Set(reflect.ValueOf(t))
 		})
 		return c

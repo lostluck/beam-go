@@ -44,7 +44,9 @@ func StartLoopback(ctx context.Context, port int, exec harness.ExecFunc) (*Loopb
 	s := &Loopback{lis: lis, root: root, rootCancel: cancel, workers: map[string]context.CancelFunc{},
 		grpcServer: grpcServer, exec: exec}
 	fnpb.RegisterBeamFnExternalWorkerPoolServer(grpcServer, s)
-	go grpcServer.Serve(lis)
+	go func() {
+		_ = grpcServer.Serve(lis)
+	}()
 	return s, nil
 }
 
@@ -95,7 +97,11 @@ func (s *Loopback) StartWorker(ctx context.Context, req *fnpb.StartWorkerRequest
 
 	opts := harnessOptions(ctx, req.GetProvisionEndpoint().GetUrl())
 
-	go harness.Main(ctx, req.GetControlEndpoint().GetUrl(), opts, s.exec)
+	go func() {
+		if err := harness.Main(ctx, req.GetControlEndpoint().GetUrl(), opts, s.exec); err != nil && !errors.Is(err, context.Canceled) {
+			slog.ErrorContext(ctx, "harness.Main error", "worker_id", req.GetWorkerId(), "error", err)
+		}
+	}()
 	return &fnpb.StartWorkerResponse{}, nil
 }
 

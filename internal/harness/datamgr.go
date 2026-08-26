@@ -251,12 +251,12 @@ func newDataChannel(ctx context.Context, port Port) (*DataChannel, error) {
 	}
 	client, err := fnpb.NewBeamFnDataClient(cc).Data(ctx)
 	if err != nil {
-		cc.Close()
+		_ = cc.Close()
 		cancelFn()
 		return nil, errors.Wrapf(err, "failed to create data client on %v", port.URL)
 	}
 	return makeDataChannel(ctx, port.URL, client, func() {
-		cc.Close()
+		_ = cc.Close()
 		cancelFn()
 	}), nil
 }
@@ -485,10 +485,14 @@ func (c *DataChannel) removeInstruction(instID instructionID) error {
 	c.mu.Unlock()
 
 	for _, w := range ws {
-		w.Close()
+		if clErr := w.Close(); clErr != nil && err == nil {
+			err = clErr
+		}
 	}
 	for _, tw := range tws {
-		tw.Close()
+		if clErr := tw.Close(); clErr != nil && err == nil {
+			err = clErr
+		}
 	}
 	if ec != nil {
 		ec.InstructionEnded()

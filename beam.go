@@ -572,7 +572,7 @@ func extractEnv(ctx context.Context, ef *envFlags, typeReg map[string]reflect.Ty
 		// Kill the inprocess server once the context is canceled.
 		go func() {
 			<-ctx.Done()
-			srv.Stop(ctx)
+			_ = srv.Stop(ctx)
 		}()
 		serializedPayload, err := proto.Marshal(&pipepb.ExternalPayload{
 			Endpoint: &pipepb.ApiServiceDescriptor{Url: srv.EnvironmentConfig(ctx)},
