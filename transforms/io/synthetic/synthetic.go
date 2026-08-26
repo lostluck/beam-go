@@ -48,7 +48,7 @@ type syntheticStep[E beam.Element] struct {
 func (fn *syntheticStep[E]) ProcessBundle(dfc *beam.DFC[E]) error {
 	startTime := time.Now()
 
-	fn.OnBundleFinish.Do(dfc, func() error {
+	fn.Do(dfc, func() error {
 		// The target is for the enclosing stage to take as close to as possible
 		// the given number of seconds, so we only sleep enough to make up for
 		// overheads not incurred elsewhere.
@@ -95,7 +95,7 @@ type syntheticSDFStep[RF beam.RestrictionFactory[E, beam.OffsetRange, int64], T 
 func (fn *syntheticSDFStep[RF, T, E]) ProcessBundle(dfc *beam.DFC[E]) error {
 	startTime := time.Now()
 
-	fn.OnBundleFinish.Do(dfc, func() error {
+	fn.Do(dfc, func() error {
 		// The target is for the enclosing stage to take as close to as possible
 		// the given number of seconds, so we only sleep enough to make up for
 		// overheads not incurred elsewhere.
@@ -112,7 +112,7 @@ func (fn *syntheticSDFStep[RF, T, E]) ProcessBundle(dfc *beam.DFC[E]) error {
 		}
 	}
 
-	return fn.BoundedSDF.Process(dfc,
+	return fn.Process(dfc,
 		makeTracker,
 		func(ec beam.ElmC, e E, or beam.OffsetRange, tc beam.TryClaim[int64]) error {
 			filterElement := false
@@ -144,6 +144,8 @@ type SourceConfig struct {
 type syntheticSourceRestrictionFactory struct {
 }
 
+var _ beam.RestrictionFactory[SourceConfig, beam.OffsetRange, int64] = syntheticSourceRestrictionFactory{}
+
 func (syntheticSourceRestrictionFactory) Setup() error {
 	return nil
 }
@@ -167,7 +169,9 @@ func (syntheticSourceRestrictionFactory) InitialSplit(cfg SourceConfig, rest bea
 			for start := rest.Min; start < rest.Max; start += int64(elmsPerBundle) {
 				stop := min(start+int64(elmsPerBundle), rest.Max)
 				out := beam.OffsetRange{Min: start, Max: stop}
-				yield(out, float64(out.Max-out.Min))
+				if !yield(out, float64(out.Max-out.Min)) {
+					return
+				}
 			}
 		}
 	}
@@ -177,7 +181,7 @@ func (syntheticSourceRestrictionFactory) Produce(cfg SourceConfig) beam.OffsetRa
 	return beam.OffsetRange{Min: 0, Max: int64(cfg.NumRecords)}
 }
 
-type syntheticSDFAsSource struct {
+type SyntheticSDFAsSource struct {
 	beam.OnBundleFinish
 	Output beam.PCol[beam.KV[[]byte, []byte]]
 	beam.BoundedSDF[syntheticSourceRestrictionFactory, SourceConfig, *beam.ORTracker, beam.OffsetRange, int64, bool]

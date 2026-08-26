@@ -323,9 +323,11 @@ func (ws *Watchers) initRPCServer() {
 		if err != nil {
 			panic(err)
 		}
-		rpc.Register(ws)
+		_ = rpc.Register(ws)
 		rpc.HandleHTTP()
-		go http.Serve(l, nil)
+		go func() {
+			_ = http.Serve(l, nil)
+		}()
 		ws.serviceAddress = l.Addr().String()
 	})
 }
@@ -450,7 +452,9 @@ type sepHarness[E comparable] struct {
 }
 
 func (fn *sepHarness[E]) ProcessBundle(dfc *DFC[E]) error {
-	fn.Base.setup()
+	if err := fn.Base.setup(); err != nil {
+		return err
+	}
 
 	return dfc.Process(func(ec ElmC, elm E) error {
 		if fn.Base.isSentinel(elm) {
@@ -474,6 +478,8 @@ type sepHarnessSDF struct {
 
 type simpleFac struct{}
 
+var _ RestrictionFactory[int, OffsetRange, int64] = simpleFac{}
+
 // This doesn't work, because we want a pointer, not a value type
 // So we want to restrict it to be a pointer type.
 func (simpleFac) Setup() error { return nil }
@@ -489,8 +495,10 @@ func (simpleFac) Produce(e int) OffsetRange {
 }
 
 func (fn *sepHarnessSDF) ProcessBundle(dfc *DFC[int]) error {
-	fn.Base.setup()
-	return fn.BoundedSDF.Process(dfc,
+	if err := fn.Base.setup(); err != nil {
+		return err
+	}
+	return fn.Process(dfc,
 		func(rest OffsetRange) *ORTracker {
 			return &ORTracker{
 				Rest: rest,

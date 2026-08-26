@@ -258,7 +258,7 @@ func TestElementChan(t *testing.T) {
 			name: "NoDataInstEndsThenRead",
 			sequenceFn: func(ctx context.Context, t *testing.T, client *fakeChanClient, c *DataChannel) <-chan Elements {
 				_ = client.Send(&fnpb.Elements{Data: []*fnpb.Elements_Data{noDataElm()}})
-				c.removeInstruction(instID)
+				_ = c.removeInstruction(instID)
 				elms := openChan(ctx, t, c)
 				return elms
 			},
@@ -381,7 +381,7 @@ func TestElementChan(t *testing.T) {
 				}
 
 				// Simulate a split, where the remaining buffer wouldn't be read further, and the instruction ends.
-				c.removeInstruction(instID)
+				_ = c.removeInstruction(instID)
 
 				// Instruction is ended, so further data for this instruction is ignored.
 				_ = client.Send(&fnpb.Elements{
@@ -461,7 +461,7 @@ func TestDataChannelRemoveInstruction_dataAfterClose(t *testing.T) {
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 	c := makeDataChannel(ctx, "id", client, cancelFn)
-	c.removeInstruction("inst_ref")
+	_ = c.removeInstruction("inst_ref")
 
 	client.blocked.Unlock()
 
@@ -479,8 +479,8 @@ func TestDataChannelRemoveInstruction_limitInstructionCap(t *testing.T) {
 
 	for i := range endedInstructionCap + 10 {
 		instID := instructionID(fmt.Sprintf("inst_ref%d", i))
-		c.OpenElementChan(ctx, "ptr", instID, nil)
-		c.removeInstruction(instID)
+		_, _ = c.OpenElementChan(ctx, "ptr", instID, nil)
+		_ = c.removeInstruction(instID)
 	}
 	if got, want := len(c.endedInstructions), endedInstructionCap; got != want {
 		t.Errorf("unexpected len(endedInstructions) got %v, want %v,", got, want)
@@ -518,7 +518,7 @@ func TestDataChannelTerminate_Writes(t *testing.T) {
 		}, {
 			name: "onInstructionEnd",
 			caseFn: func(t *testing.T, w io.WriteCloser, client *fakeDataClient, c *DataChannel) error {
-				c.removeInstruction(instID)
+				_ = c.removeInstruction(instID)
 				return expectedError
 			},
 		},
@@ -614,9 +614,9 @@ func BenchmarkDataWriter(b *testing.B) {
 			}
 
 			for i := 0; i < b.N; i++ {
-				w.Write(bench.data)
+				_, _ = w.Write(bench.data)
 			}
-			w.Close()
+			_ = w.Close()
 		})
 	}
 }

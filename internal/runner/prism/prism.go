@@ -87,8 +87,8 @@ func downloadToCache(url, local string) error {
 	tmpName := tmpFile.Name()
 	defer func() {
 		if tmpFile != nil {
-			tmpFile.Close()
-			os.Remove(tmpName)
+			_ = tmpFile.Close()
+			_ = os.Remove(tmpName)
 		}
 	}()
 
@@ -96,7 +96,9 @@ func downloadToCache(url, local string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	// Check server response
 	if resp.StatusCode != http.StatusOK {
@@ -115,7 +117,7 @@ func downloadToCache(url, local string) error {
 	tmpFile = nil
 
 	if err := os.Rename(tmpName, local); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return err
 	}
 
@@ -128,7 +130,9 @@ func unzipCachedFile(zipfile, outputDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("unzipCachedFile: couldn't open file: %w", err)
 	}
-	defer zr.Close()
+	defer func() {
+		_ = zr.Close()
+	}()
 
 	if len(zr.File) == 0 {
 		return "", fmt.Errorf("unzipCachedFile: zip archive is empty")
@@ -146,7 +150,9 @@ func unzipCachedFile(zipfile, outputDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("unzipCachedFile: couldn't open inner file: %w", err)
 	}
-	defer br.Close()
+	defer func() {
+		_ = br.Close()
+	}()
 
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return "", err
@@ -159,8 +165,8 @@ func unzipCachedFile(zipfile, outputDir string) (string, error) {
 	tmpName := tmpFile.Name()
 	defer func() {
 		if tmpFile != nil {
-			tmpFile.Close()
-			os.Remove(tmpName)
+			_ = tmpFile.Close()
+			_ = os.Remove(tmpName)
 		}
 	}()
 
@@ -179,7 +185,7 @@ func unzipCachedFile(zipfile, outputDir string) (string, error) {
 	tmpFile = nil
 
 	if err := os.Rename(tmpName, output); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return "", fmt.Errorf("unzipCachedFile: couldn't rename to final destination: %w", err)
 	}
 
@@ -191,7 +197,9 @@ func withCacheLock(lockDir string, fn func() error) error {
 	for {
 		err := os.Mkdir(lockDir, 0755)
 		if err == nil {
-			defer os.Remove(lockDir)
+			defer func() {
+				_ = os.Remove(lockDir)
+			}()
 			return fn()
 		}
 		if time.Now().After(deadline) {
@@ -231,11 +239,15 @@ func pickPort() string {
 		if err2 != nil {
 			panic(fmt.Errorf("couldn't select random port to listen to: %w", err2))
 		}
-		defer lis.Close()
+		defer func() {
+			_ = lis.Close()
+		}()
 		_, port, _ := net.SplitHostPort(lis.Addr().String())
 		return port
 	}
-	defer l.Close()
+	defer func() {
+		_ = l.Close()
+	}()
 	_, port, _ := net.SplitHostPort(l.LocalAddr().String())
 	return port
 }
@@ -254,7 +266,7 @@ type endpointDetector struct {
 func (d *endpointDetector) Write(p []byte) (n int, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	os.Stdout.Write(p)
+	_, _ = os.Stdout.Write(p)
 	if !d.found {
 		s := string(p)
 		if idx := strings.Index(s, "endpoint="); idx != -1 {
@@ -371,7 +383,7 @@ func Start(ctx context.Context, opts Options) (*Handle, error) {
 	handle := &Handle{
 		addr: addr,
 		cancelFn: func() {
-			cmd.Process.Kill()
+			_ = cmd.Process.Kill()
 		},
 		cmd: cmd,
 	}

@@ -70,9 +70,10 @@ func jsonDoFnMarshallers() json.Options {
 			// Turn all beam mixins into {} by default, as state should be reconstrutable from
 			// the types anyway.
 			json.MarshalToFunc(func(enc *jsontext.Encoder, byp bypassInterface) error {
-				enc.WriteToken(jsontext.BeginObject)
-				enc.WriteToken(jsontext.EndObject)
-				return nil
+				if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+					return err
+				}
+				return enc.WriteToken(jsontext.EndObject)
 			}),
 			json.MarshalToFunc(func(enc *jsontext.Encoder, d time.Duration) error {
 				return enc.WriteToken(jsontext.String(d.String()))
@@ -721,8 +722,7 @@ func decodePort(data []byte) (harness.Port, string, error) {
 }
 
 var (
-	efaceRT               = reflect.TypeFor[emitIface]()
-	procSizedElmAndRestRT = reflect.TypeFor[procSizedElmAndRestIface]()
+	efaceRT = reflect.TypeFor[emitIface]()
 )
 
 // getEmitIfaceByName extracts an emitter from the DoFn so we can get the exact type

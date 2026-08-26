@@ -185,7 +185,9 @@ func TestReadWritePipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close()
+	defer func() {
+		_ = b.Close()
+	}()
 
 	if err := b.WriteAll(ctx, "file1.txt", []byte("apple\nbanana\ncherry\n"), nil); err != nil {
 		t.Fatal(err)
@@ -259,7 +261,9 @@ func TestProcessBundle_Offsets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close()
+	defer func() {
+		_ = b.Close()
+	}()
 
 	if err := b.WriteAll(ctx, "data.txt", []byte("line1\nline2\nline3\nline4\n"), nil); err != nil {
 		t.Fatal(err)

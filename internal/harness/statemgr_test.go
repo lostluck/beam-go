@@ -481,7 +481,7 @@ func TestStateKeyWriter(t *testing.T) {
 				writeType: test.writeType,
 			}
 
-			r.Write(test.data)
+			_, _ = r.Write(test.data)
 		})
 	}
 }

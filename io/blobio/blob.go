@@ -66,7 +66,9 @@ func (f ReadableBlob) Open(ctx context.Context) (io.ReadSeekCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer bucket.Close()
+	defer func() {
+		_ = bucket.Close()
+	}()
 
 	rc, err := bucket.NewReader(ctx, f.Metadata.Key, nil)
 	if err != nil {

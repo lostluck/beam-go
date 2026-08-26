@@ -257,7 +257,9 @@ func (st *StateBag[E]) persist() error {
 
 		if entry.cleared {
 			c := st.init.Clearer([]byte(key.k), []byte(key.w))
-			c.Write(nil)
+			if _, err := c.Write(nil); err != nil {
+				return err
+			}
 		}
 
 		// We only ever need to write the fresh values for the bag.
@@ -360,7 +362,9 @@ func (st *StateValue[E]) persist() error {
 
 		if entry.cleared {
 			c := st.init.Clearer([]byte(key.k), []byte(key.w))
-			c.Write(nil)
+			if _, err := c.Write(nil); err != nil {
+				return err
+			}
 		}
 
 		w := st.init.Appender([]byte(key.k), []byte(key.w))
@@ -488,7 +492,9 @@ func (st *StateMap[K, V]) persist() error {
 
 		if entry.cleared {
 			c := st.initKeys.Clearer([]byte(key.k), []byte(key.w))
-			c.Write(nil)
+			if _, err := c.Write(nil); err != nil {
+				return err
+			}
 		}
 
 		for userKey, userEntry := range entry.fresh {
@@ -500,7 +506,9 @@ func (st *StateMap[K, V]) persist() error {
 			userKeyBytes := enc.Data()
 			if userEntry.cleared {
 				c := st.initVals.Clearer([]byte(key.k), []byte(key.w), userKeyBytes)
-				c.Write(nil)
+				if _, err := c.Write(nil); err != nil {
+					return err
+				}
 			}
 
 			w := st.initVals.Appender([]byte(key.k), []byte(key.w), userKeyBytes)
@@ -723,7 +731,9 @@ func (st *StateSet[E]) persist() error {
 
 		if entry.cleared {
 			c := st.initKeys.Clearer([]byte(key.k), []byte(key.w))
-			c.Write(nil)
+			if _, err := c.Write(nil); err != nil {
+				return err
+			}
 		}
 
 		if !entry.valid {
@@ -739,7 +749,9 @@ func (st *StateSet[E]) persist() error {
 			userElemBytes := enc.Data()
 			if userEntry.cleared {
 				c := st.initVals.Clearer([]byte(key.k), []byte(key.w), userElemBytes)
-				c.Write(nil)
+				if _, err := c.Write(nil); err != nil {
+					return err
+				}
 			}
 			if userEntry.valid {
 				w := st.initVals.Appender([]byte(key.k), []byte(key.w), userElemBytes)
@@ -948,7 +960,9 @@ func (st *StateMultiMap[K, V]) persist() error {
 
 		if entry.cleared {
 			c := st.initKeys.Clearer([]byte(key.k), []byte(key.w))
-			c.Write(nil)
+			if _, err := c.Write(nil); err != nil {
+				return err
+			}
 		}
 
 		if !entry.valid {
@@ -964,7 +978,9 @@ func (st *StateMultiMap[K, V]) persist() error {
 			userKeyBytes := enc.Data()
 			if userEntry.cleared {
 				c := st.initVals.Clearer([]byte(key.k), []byte(key.w), userKeyBytes)
-				c.Write(nil)
+				if _, err := c.Write(nil); err != nil {
+					return err
+				}
 			}
 			if userEntry.valid && len(userEntry.fresh) > 0 {
 				w := st.initVals.Appender([]byte(key.k), []byte(key.w), userKeyBytes)
@@ -1158,7 +1174,9 @@ func (st *StateOrderedList[E]) persist() error {
 
 		if entry.cleared {
 			c := st.init.Clearer([]byte(key.k), []byte(key.w))
-			c.Write(nil)
+			if _, err := c.Write(nil); err != nil {
+				return err
+			}
 		}
 
 		if !entry.valid || len(entry.fresh) == 0 {

@@ -108,7 +108,9 @@ func TestWordcountPipeline(t *testing.T) {
 	tmpDir := t.TempDir()
 	inPath := filepath.Join(tmpDir, "input.txt")
 	outPath := filepath.Join(tmpDir, "out")
-	os.MkdirAll(outPath, 0755)
+	if err := os.MkdirAll(outPath, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := os.WriteFile(inPath, []byte("hello world hello"), 0644); err != nil {
 		t.Fatal(err)

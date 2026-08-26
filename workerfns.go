@@ -31,13 +31,12 @@ type multiplex[E Element] struct {
 }
 
 func (fn *multiplex[E]) ProcessBundle(dfc *DFC[E]) error {
-	dfc.Process(func(ec ElmC, elm E) error {
+	return dfc.Process(func(ec ElmC, elm E) error {
 		for _, out := range fn.Outs {
 			out.Emit(ec, elm)
 		}
 		return nil
 	})
-	return nil
 }
 
 // discard is a Transform inserted when a PCollection is unused by a downstream Transform.
@@ -46,8 +45,7 @@ func (fn *multiplex[E]) ProcessBundle(dfc *DFC[E]) error {
 type discard[E Element] struct{}
 
 func (fn *discard[E]) ProcessBundle(dfc *DFC[E]) error {
-	dfc.Process(func(ec ElmC, elm E) error {
+	return dfc.Process(func(ec ElmC, elm E) error {
 		return nil
 	})
-	return nil
 }

@@ -184,13 +184,13 @@ var (
 // with the input integer N as key.
 // and the output being all integers i: 0 <= i < N-1
 type countingSplitterFn struct {
-	beam.BoundedSDF[simpleFac, int, *beam.ORTracker, beam.OffsetRange, int64, bool]
+	beam.BoundedSDF[SimpleFac, int, *beam.ORTracker, beam.OffsetRange, int64, bool]
 
 	Output beam.PCol[beam.KV[int, int64]]
 }
 
 func (fn *countingSplitterFn) ProcessBundle(dfc *beam.DFC[int]) error {
-	return fn.BoundedSDF.Process(dfc,
+	return fn.Process(dfc,
 		func(rest beam.OffsetRange) *beam.ORTracker {
 			return &beam.ORTracker{
 				Rest: rest,
@@ -204,19 +204,21 @@ func (fn *countingSplitterFn) ProcessBundle(dfc *beam.DFC[int]) error {
 		})
 }
 
-type simpleFac struct{}
+type SimpleFac struct{}
+
+var _ beam.RestrictionFactory[int, beam.OffsetRange, int64] = SimpleFac{}
 
 // This doesn't work, because we want a pointer, not a value type
 // So we want to restrict it to be a pointer type.
-func (simpleFac) Setup() error { return nil }
+func (SimpleFac) Setup() error { return nil }
 
-func (simpleFac) InitialSplit(_ int, r beam.OffsetRange) iter.Seq2[beam.OffsetRange, float64] {
+func (SimpleFac) InitialSplit(_ int, r beam.OffsetRange) iter.Seq2[beam.OffsetRange, float64] {
 	return maps.All(map[beam.OffsetRange]float64{
 		r: float64(r.Max - r.Min),
 	})
 }
 
-func (simpleFac) Produce(e int) beam.OffsetRange {
+func (SimpleFac) Produce(e int) beam.OffsetRange {
 	fmt.Println("producing range for ", e)
 	return beam.OffsetRange{0, int64(e) + 1}
 }

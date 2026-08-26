@@ -74,12 +74,6 @@ func (f *fakeDataClientWithTimers) setRecvErr(err error) {
 	f.recvErr = err
 }
 
-func (f *fakeDataClientWithTimers) setSendErr(err error) {
-	f.sendMu.Lock()
-	defer f.sendMu.Unlock()
-	f.sendErr = err
-}
-
 func TestScopedDataManager_Lifecycle(t *testing.T) {
 	ctx := t.Context()
 	mgr := &DataChannelManager{

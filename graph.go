@@ -172,10 +172,7 @@ func (g *graph) build(ctx context.Context, dataCon harness.DataContext) ([]proce
 			}
 		}
 	}
-	for {
-		if len(stack) == 0 {
-			break
-		}
+	for len(stack) > 0 {
 		c = stack[len(stack)-1]
 		stack = stack[0 : len(stack)-1]
 		switch e := c.edge.(type) {

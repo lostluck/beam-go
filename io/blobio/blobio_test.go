@@ -142,13 +142,15 @@ func TestGzipReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close()
+	defer func() {
+		_ = b.Close()
+	}()
 
 	// Write gzipped data
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
-	zw.Write([]byte("hello gzipped world"))
-	zw.Close()
+	_, _ = zw.Write([]byte("hello gzipped world"))
+	_ = zw.Close()
 
 	if err := b.WriteAll(ctx, "test.gz", buf.Bytes(), nil); err != nil {
 		t.Fatal(err)
@@ -177,7 +179,9 @@ func TestGzipReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
+	defer func() {
+		_ = rc.Close()
+	}()
 	defer func() {
 		if r := recover(); r == nil {
 			t.Errorf("expected Seek to panic")
@@ -195,7 +199,9 @@ func TestReadableBlob_Uncompressed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close()
+	defer func() {
+		_ = b.Close()
+	}()
 
 	if err := b.WriteAll(ctx, "data.txt", []byte("plain text content"), nil); err != nil {
 		t.Fatal(err)
@@ -280,7 +286,9 @@ func TestMatchAndReadPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close()
+	defer func() {
+		_ = b.Close()
+	}()
 
 	if err := b.WriteAll(ctx, "file1.txt", []byte("file 1 content"), nil); err != nil {
 		t.Fatal(err)

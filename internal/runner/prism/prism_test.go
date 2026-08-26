@@ -80,7 +80,7 @@ func TestDownloadToCache(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/ok" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("downloaded content"))
+			_, _ = w.Write([]byte("downloaded content"))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -149,8 +149,8 @@ func TestUnzipCachedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fw.Write([]byte("#!/bin/sh\nexit 0\n"))
-	zw.Close()
+	_, _ = fw.Write([]byte("#!/bin/sh\nexit 0\n"))
+	_ = zw.Close()
 
 	if err := os.WriteFile(zipPath, buf.Bytes(), 0644); err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestUnzipCachedFile(t *testing.T) {
 	}
 
 	nonZip := filepath.Join(tmpDir, "notazip.txt")
-	os.WriteFile(nonZip, []byte("raw binary content"), 0755)
+	_ = os.WriteFile(nonZip, []byte("raw binary content"), 0755)
 
 	tests := []struct {
 		name     string
@@ -204,9 +204,9 @@ func TestUnzipCachedFile(t *testing.T) {
 	// Create an empty zip file (valid format, but 0 entries)
 	var emptyBuf bytes.Buffer
 	emptyZw := zip.NewWriter(&emptyBuf)
-	emptyZw.Close()
+	_ = emptyZw.Close()
 	emptyZip := filepath.Join(tmpDir, "empty.zip")
-	os.WriteFile(emptyZip, emptyBuf.Bytes(), 0644)
+	_ = os.WriteFile(emptyZip, emptyBuf.Bytes(), 0644)
 
 	tests = append(tests, struct {
 		name     string

@@ -112,9 +112,8 @@ type flatten[E Element] struct {
 }
 
 func (fn *flatten[E]) ProcessBundle(dfc *DFC[E]) error {
-	dfc.Process(func(ec ElmC, elm E) error {
+	return dfc.Process(func(ec ElmC, elm E) error {
 		fn.Output.Emit(ec, elm)
 		return nil
 	})
-	return nil
 }

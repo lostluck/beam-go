@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
-	"golang.org/x/exp/maps"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -44,13 +44,17 @@ func Main(ctx context.Context, controlEndpoint string, opts Options, exec ExecFu
 		if err != nil {
 			return errors.Wrap(err, "failed to connect to logging endpoint")
 		}
-		defer conn.Close()
+		defer func() {
+			_ = conn.Close()
+		}()
 		lc := fnpb.NewBeamFnLoggingClient(conn)
 		logClient, err = lc.Logging(ctx)
 		if err != nil {
 			return errors.Wrap(err, "failed to create logging client")
 		}
-		defer logClient.CloseSend()
+		defer func() {
+			_ = logClient.CloseSend()
+		}()
 		logChan = make(chan *fnpb.LogEntry, 100)
 		go func() {
 			list := &fnpb.LogEntry_List{}
@@ -80,7 +84,9 @@ func Main(ctx context.Context, controlEndpoint string, opts Options, exec ExecFu
 	if err != nil {
 		return errors.Wrap(err, "failed to connect to control endpoint")
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	client := fnpb.NewBeamFnControlClient(conn)
 
@@ -161,6 +167,7 @@ func DefaultDial(ctx context.Context, endpoint string, timeout time.Duration) (*
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	//nolint:staticcheck // DialContext with WithBlock is needed for synchronous blocking dial in SDK harness.
 	cc, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),

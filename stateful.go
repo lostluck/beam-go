@@ -201,7 +201,7 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 		return userPerElm(ec, e)
 	}
 
-	fn.OnBundleFinish.Do(dfc, func() error {
+	fn.Do(dfc, func() error {
 		for _, st := range fn.stateInterfaces {
 			if err := st.persist(); err != nil {
 				return err
@@ -209,7 +209,6 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 		}
 		return nil
 	})
-
 	return nil
 }
 

@@ -40,8 +40,9 @@ func ContainerImages(p *pipepb.Pipeline) []string {
 	var ret []string
 	for _, t := range p.GetComponents().GetEnvironments() {
 		var payload pipepb.DockerPayload
-		proto.Unmarshal(t.GetPayload(), &payload)
-		ret = append(ret, payload.ContainerImage)
+		if err := proto.Unmarshal(t.GetPayload(), &payload); err == nil {
+			ret = append(ret, payload.ContainerImage)
+		}
 	}
 	return ret
 }

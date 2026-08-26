@@ -69,11 +69,10 @@ type AddFixedKeyFn[E Element] struct {
 }
 
 func (fn *AddFixedKeyFn[E]) ProcessBundle(dfc *DFC[E]) error {
-	dfc.Process(func(ec ElmC, elm E) error {
+	return dfc.Process(func(ec ElmC, elm E) error {
 		fn.Output.Emit(ec, KV[int, E]{Key: 0, Value: elm})
 		return nil
 	})
-	return nil
 }
 
 type MeanFn[E constraints.Integer | constraints.Float] struct{}

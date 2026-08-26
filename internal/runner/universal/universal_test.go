@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
@@ -298,7 +299,9 @@ func TestPipeline_UniversalRunner_Mock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lis.Close()
+	defer func() {
+		_ = lis.Close()
+	}()
 
 	mockSrv := &mockJobServer{
 		addr: lis.Addr().String(),
@@ -325,7 +328,9 @@ func TestPipeline_UniversalRunner_Mock(t *testing.T) {
 	jobpb.RegisterJobServiceServer(grpcServer, mockSrv)
 	jobpb.RegisterArtifactStagingServiceServer(grpcServer, mockSrv)
 
-	go grpcServer.Serve(lis)
+	go func() {
+		_ = grpcServer.Serve(lis)
+	}()
 	defer grpcServer.Stop()
 
 	ctx := t.Context()
@@ -369,7 +374,9 @@ func TestWaitForCompletion_Failed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lis.Close()
+	defer func() {
+		_ = lis.Close()
+	}()
 
 	mockSrv := &mockJobServer{
 		msgs: []*jobpb.JobMessagesResponse{
@@ -393,14 +400,18 @@ func TestWaitForCompletion_Failed(t *testing.T) {
 
 	grpcServer := grpc.NewServer()
 	jobpb.RegisterJobServiceServer(grpcServer, mockSrv)
-	go grpcServer.Serve(lis)
+	go func() {
+		_ = grpcServer.Serve(lis)
+	}()
 	defer grpcServer.Stop()
 
-	conn, err := grpc.Dial(lis.Addr().String(), grpc.WithInsecure())
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	client := jobpb.NewJobServiceClient(conn)
 	logger := slog.Default()
@@ -424,7 +435,9 @@ func TestStageViaPortableAPI_WithFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lis.Close()
+	defer func() {
+		_ = lis.Close()
+	}()
 
 	srv := &fileArtifactServer{
 		typeUrn:     "beam:artifact:type:file:v1",
@@ -432,14 +445,18 @@ func TestStageViaPortableAPI_WithFile(t *testing.T) {
 	}
 	grpcServer := grpc.NewServer()
 	jobpb.RegisterArtifactStagingServiceServer(grpcServer, srv)
-	go grpcServer.Serve(lis)
+	go func() {
+		_ = grpcServer.Serve(lis)
+	}()
 	defer grpcServer.Stop()
 
-	conn, err := grpc.Dial(lis.Addr().String(), grpc.WithInsecure())
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	err = stageViaPortableAPI(t.Context(), conn, "test-token")
 	if err != nil {

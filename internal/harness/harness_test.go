@@ -354,7 +354,9 @@ func TestMain_HarnessIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lis.Close()
+	defer func() {
+		_ = lis.Close()
+	}()
 
 	mockSrv := &mockBeamFnServer{
 		reqs: []*fnpb.InstructionRequest{
@@ -381,7 +383,9 @@ func TestMain_HarnessIntegration(t *testing.T) {
 	fnpb.RegisterBeamFnControlServer(grpcServer, mockSrv)
 	fnpb.RegisterBeamFnLoggingServer(grpcServer, mockSrv)
 
-	go grpcServer.Serve(lis)
+	go func() {
+		_ = grpcServer.Serve(lis)
+	}()
 	defer grpcServer.Stop()
 
 	endpoint := lis.Addr().String()

@@ -16,8 +16,8 @@
 package pipelinex
 
 import (
-	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
+	"maps"
+	"slices"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 )
 

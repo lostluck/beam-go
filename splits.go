@@ -20,9 +20,8 @@ import (
 	"iter"
 	"log/slog"
 	"math"
+	"slices"
 	"sync"
-
-	"golang.org/x/exp/slices"
 	"lostluck.dev/beam-go/coders"
 )
 
@@ -247,7 +246,9 @@ type splitAndSizeRestrictions[FAC RestrictionFactory[O, R, P], O Element, R Rest
 }
 
 func (fn *splitAndSizeRestrictions[FAC, O, R, P, WES]) ProcessBundle(dfc *DFC[KV[O, KV[R, WES]]]) error {
-	fn.Factory.Setup()
+	if err := fn.Factory.Setup(); err != nil {
+		return err
+	}
 	return dfc.Process(func(ec ElmC, elm KV[O, KV[R, WES]]) error {
 		for subR, size := range fn.Factory.InitialSplit(elm.Key, elm.Value.Key) {
 			fn.Output.Emit(ec, Pair(Pair(elm.Key, Pair(subR, elm.Value.Value)), size))
@@ -287,7 +288,7 @@ func (fn *processSizedElementAndRestriction[FAC, O, T, R, P, WES]) ProcessBundle
 		return err
 	}
 	if userDfc.perElm != nil {
-		return fmt.Errorf("User transform called *DFC.Process, but should have called SDF.Process.")
+		return fmt.Errorf("user transform called *DFC.Process, but should have called SDF.Process")
 	}
 	dfc.finishBundle = userDfc.finishBundle
 

@@ -279,7 +279,7 @@ func (c *rowStructCoderNested) Decode(dec *Decoder) reflect.Value {
 }
 
 func makeSliceCoder[E any](rt reflect.Type) any {
-	panic("makeSliceCoder is unimplemented")
+	panic("TODO makeSliceCoder is unimplemented")
 }
 
 type sliceCoder[T any] struct{}

@@ -183,7 +183,9 @@ func ProvisionInfo(ctx context.Context, endpoint string) (*fnpb.ProvisionInfo, e
 	if err != nil {
 		return nil, err
 	}
-	defer cc.Close()
+	defer func() {
+		_ = cc.Close()
+	}()
 
 	client := fnpb.NewProvisionServiceClient(cc)
 

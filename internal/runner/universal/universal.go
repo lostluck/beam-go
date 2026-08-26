@@ -88,7 +88,9 @@ func Execute(ctx context.Context, p *pipepb.Pipeline, opts beamopts.Struct) (*Pi
 	if err != nil {
 		return nil, fmt.Errorf("connecting to artifact service: %w", err)
 	}
-	defer artcc.Close()
+	defer func() {
+		_ = artcc.Close()
+	}()
 	if err := stageViaPortableAPI(ctx, artcc, prepResp.GetStagingSessionToken()); err != nil {
 		return nil, fmt.Errorf("staging artifacts: %w", err)
 	}
@@ -109,7 +111,7 @@ func Execute(ctx context.Context, p *pipepb.Pipeline, opts beamopts.Struct) (*Pi
 		jobID:  runResp.GetJobId(),
 		client: client,
 		close: func() {
-			cc.Close()
+			_ = cc.Close()
 		},
 		// TODO make logger configurable.
 		logger: slog.New(disabledHandler{}),
@@ -385,7 +387,9 @@ func stageFile(filename string, stream jobpb.ArtifactStagingService_ReverseArtif
 	if err != nil {
 		return errors.Wrapf(err, "unable to open file %v", filename)
 	}
-	defer fd.Close()
+	defer func() {
+		_ = fd.Close()
+	}()
 
 	data := make([]byte, 1<<20)
 	for {

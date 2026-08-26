@@ -36,7 +36,9 @@ func iterClosure[E Element](r harness.NextBuffer) iter.Seq[E] {
 
 func iterClosureWithCoder[E Element](c coders.Coder[E], r harness.NextBuffer) iter.Seq[E] {
 	return func(perElm func(elm E) bool) {
-		defer r.Close()
+		defer func() {
+			_ = r.Close()
+		}()
 		for {
 			buf, err := r.NextBuf()
 			if err != nil {
@@ -57,7 +59,9 @@ func iterClosureWithCoder[E Element](c coders.Coder[E], r harness.NextBuffer) it
 
 func iterClosureWithTimestampCoder[E Element](c coders.Coder[E], r harness.NextBuffer) iter.Seq2[time.Time, E] {
 	return func(perElm func(ts time.Time, elm E) bool) {
-		defer r.Close()
+		defer func() {
+			_ = r.Close()
+		}()
 		for {
 			buf, err := r.NextBuf()
 			if err != nil {

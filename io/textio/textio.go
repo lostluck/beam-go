@@ -145,6 +145,7 @@ const (
 )
 
 func (restFac) InitialSplit(e blobio.ReadableBlob, r beam.OffsetRange) iter.Seq2[beam.OffsetRange, float64] {
+	// TODO: Do smart splits.
 	// splits := rest.SizedSplits(blockSize)
 	// numSplits := len(splits)
 	// if numSplits > 1 {
@@ -178,7 +179,9 @@ func processBundle[C consumer](base readBaseFn, dfc *beam.DFC[blobio.ReadableBlo
 			if err != nil {
 				return err
 			}
-			defer bucket.Close()
+			defer func() {
+				_ = bucket.Close()
+			}()
 			rr, err := bucket.NewReader(ctx, rb.Metadata.Key, nil)
 
 			if err != nil {
@@ -207,7 +210,7 @@ func processBundle[C consumer](base readBaseFn, dfc *beam.DFC[blobio.ReadableBlo
 				if err == io.EOF {
 					// No lines start in the restriction but it's still valid, so
 					// finish claiming before returning to avoid errors.
-					tc(func(p int64) (int64, error) {
+					_ = tc(func(p int64) (int64, error) {
 						return or.Max, nil
 					})
 					return nil
@@ -298,7 +301,9 @@ func (w *writeFilesFn) ProcessBundle(dfc *beam.DFC[beam.KV[beam.KV[string, strin
 		if err != nil {
 			return err
 		}
-		defer bucket.Close()
+		defer func() {
+			_ = bucket.Close()
+		}()
 
 		fd, err := bucket.NewWriter(ctx, k.Value, nil)
 		if err != nil {
@@ -336,7 +341,9 @@ func Immediate(s *beam.Scope, filename string) (beam.PCol[string], error) {
 	if err != nil {
 		return beam.PCol[string]{}, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {

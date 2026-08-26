@@ -306,7 +306,7 @@ func (r *stateKeyReader) NextBuf() ([]byte, error) {
 	}
 	resp, err := localChannel.Send(req)
 	if err != nil {
-		r.Close()
+		_ = r.Close()
 		return nil, err
 	}
 	get := resp.GetGet()
@@ -354,7 +354,7 @@ func (r *stateKeyReader) Read(buf []byte) (int, error) {
 		}
 		resp, err := localChannel.Send(req)
 		if err != nil {
-			r.Close()
+			_ = r.Close()
 			return 0, err
 		}
 		get := resp.GetGet()
@@ -505,12 +505,12 @@ func newStateChannel(ctx context.Context, url string) (*StateChannel, error) {
 	}
 	client, err := fnpb.NewBeamFnStateClient(cc).State(ctx)
 	if err != nil {
-		cc.Close()
+		_ = cc.Close()
 		cancelFn()
 		return nil, errors.Wrapf(err, "failed to create state client %v", url)
 	}
 	return makeStateChannel(ctx, url, client, func() {
-		cc.Close()
+		_ = cc.Close()
 		cancelFn()
 	}), nil
 }

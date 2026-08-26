@@ -140,7 +140,9 @@ func (fn *matchFn) ProcessBundle(dfc *beam.DFC[beam.KV[string, string]]) error {
 		if err != nil {
 			return err
 		}
-		defer bucket.Close()
+		defer func() {
+			_ = bucket.Close()
+		}()
 
 		listIter := bucket.List(nil)
 		count := 0

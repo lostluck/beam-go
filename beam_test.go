@@ -39,14 +39,13 @@ type SourceFn struct {
 func (fn *SourceFn) ProcessBundle(dfc *DFC[[]byte]) error {
 	// Do some startbundle work.
 	processed := 0
-	dfc.Process(func(ec ElmC, _ []byte) error {
+	return dfc.Process(func(ec ElmC, _ []byte) error {
 		for i := 0; i < fn.Count; i++ {
 			processed++
 			fn.Output.Emit(ec, i)
 		}
 		return nil
 	})
-	return nil
 }
 
 type DiscardFn[E Element] struct {
@@ -56,11 +55,13 @@ type DiscardFn[E Element] struct {
 }
 
 func (fn *DiscardFn[E]) ProcessBundle(dfc *DFC[E]) error {
-	dfc.Process(func(ec ElmC, elm E) error {
+	if err := dfc.Process(func(ec ElmC, elm E) error {
 		fn.Processed.Inc(dfc, 1)
 		return nil
-	})
-	fn.OnBundleFinish.Do(dfc, func() error {
+	}); err != nil {
+		return err
+	}
+	fn.Do(dfc, func() error {
 		fn.Finished.Inc(dfc, 1)
 		return nil
 	})
@@ -75,11 +76,10 @@ type IdenFn[E Element] struct {
 
 func (fn *IdenFn[E]) ProcessBundle(dfc *DFC[E]) error {
 	fn.BundleStarts.Inc(dfc, 1)
-	dfc.Process(func(ec ElmC, elm E) error {
+	return dfc.Process(func(ec ElmC, elm E) error {
 		fn.Output.Emit(ec, elm)
 		return nil
 	})
-	return nil
 }
 
 func pipeName(tb testing.TB) beamopts.Options {
@@ -184,12 +184,11 @@ type ModPartition[V constraints.Integer] struct {
 
 func (fn *ModPartition[V]) ProcessBundle(dfc *DFC[V]) error {
 	mod := V(len(fn.Outputs))
-	dfc.Process(func(ec ElmC, elm V) error {
+	return dfc.Process(func(ec ElmC, elm V) error {
 		rem := elm % mod
 		fn.Outputs[rem].Emit(ec, elm)
 		return nil
 	})
-	return nil
 }
 
 type WideNarrow struct {
@@ -270,7 +269,7 @@ type KeyMod[V constraints.Integer] struct {
 }
 
 func (fn *KeyMod[V]) ProcessBundle(dfc *DFC[V]) error {
-	dfc.Process(func(ec ElmC, elm V) error {
+	return dfc.Process(func(ec ElmC, elm V) error {
 		mod := elm % fn.Mod
 		fn.Output.Emit(ec, KV[V, V]{
 			Key:   V(mod),
@@ -278,7 +277,6 @@ func (fn *KeyMod[V]) ProcessBundle(dfc *DFC[V]) error {
 		})
 		return nil
 	})
-	return nil
 }
 
 type SumByKey[K Keys, V constraints.Integer | constraints.Float] struct {
@@ -286,7 +284,7 @@ type SumByKey[K Keys, V constraints.Integer | constraints.Float] struct {
 }
 
 func (fn *SumByKey[K, V]) ProcessBundle(dfc *DFC[KV[K, Iter[V]]]) error {
-	dfc.Process(func(ec ElmC, elm KV[K, Iter[V]]) error {
+	return dfc.Process(func(ec ElmC, elm KV[K, Iter[V]]) error {
 		var sum V
 		elm.Value.All()(func(elm V) bool {
 			sum += elm
@@ -295,7 +293,6 @@ func (fn *SumByKey[K, V]) ProcessBundle(dfc *DFC[KV[K, Iter[V]]]) error {
 		fn.Output.Emit(ec, KV[K, V]{Key: elm.Key, Value: sum})
 		return nil
 	})
-	return nil
 }
 
 type GroupKeyModSum[V constraints.Integer] struct {
@@ -313,15 +310,17 @@ var (
 
 func (fn *GroupKeyModSum[V]) ProcessBundle(dfc *DFC[V]) error {
 	grouped := map[V]V{}
-	dfc.Process(func(ec ElmC, elm V) error {
+	if err := dfc.Process(func(ec ElmC, elm V) error {
 		mod := elm % fn.Mod
 		v := grouped[mod]
 		v += elm
 		grouped[mod] = v
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
 
-	fn.OnBundleFinish.Do(dfc, func() error {
+	fn.Do(dfc, func() error {
 		ec := dfc.ToElmC(EOGW) // TODO pull from the window that's been closed.
 		for k, v := range grouped {
 			fn.Output.Emit(ec, KV[V, V]{Key: k, Value: v})
