@@ -19,7 +19,6 @@ package prism
 import (
 	"archive/zip"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -76,11 +75,22 @@ func constructDownloadPath(rootTag, version string) string {
 }
 
 func downloadToCache(url, local string) error {
-	out, err := os.Create(local)
+	dir := filepath.Dir(local)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	tmpFile, err := os.CreateTemp(dir, "download-*.tmp")
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	tmpName := tmpFile.Name()
+	defer func() {
+		if tmpFile != nil {
+			tmpFile.Close()
+			os.Remove(tmpName)
+		}
+	}()
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -93,9 +103,19 @@ func downloadToCache(url, local string) error {
 		return fmt.Errorf("bad status: %s", resp.Status)
 	}
 
-	// Writer the body to file
-	_, err = io.Copy(out, resp.Body)
+	// Write the body to temporary file
+	_, err = io.Copy(tmpFile, resp.Body)
 	if err != nil {
+		return err
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	tmpFile = nil
+
+	if err := os.Rename(tmpName, local); err != nil {
+		os.Remove(tmpName)
 		return err
 	}
 
@@ -110,34 +130,76 @@ func unzipCachedFile(zipfile, outputDir string) (string, error) {
 	}
 	defer zr.Close()
 
-	br, err := zr.File[0].Open()
-	if err != nil {
-		return "", fmt.Errorf("unzipCachedFile: couldn't inner file: %w", err)
+	if len(zr.File) == 0 {
+		return "", fmt.Errorf("unzipCachedFile: zip archive is empty")
 	}
-	defer br.Close()
 
-	output := path.Join(outputDir, zr.File[0].Name)
+	output := filepath.Join(outputDir, zr.File[0].Name)
 
-	if _, err := os.Stat(output); err == nil {
-		// Binary already exists, lets assume it's the right one.
+	if fi, err := os.Stat(output); err == nil && fi.Size() > 0 {
+		// Binary already exists, ensure executable permissions.
+		_ = os.Chmod(output, 0755)
 		return output, nil
 	}
 
-	out, err := os.Create(output)
+	br, err := zr.File[0].Open()
+	if err != nil {
+		return "", fmt.Errorf("unzipCachedFile: couldn't open inner file: %w", err)
+	}
+	defer br.Close()
+
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", err
+	}
+
+	tmpFile, err := os.CreateTemp(outputDir, "unzip-*.tmp")
 	if err != nil {
 		return "", fmt.Errorf("unzipCachedFile: couldn't create executable: %w", err)
 	}
-	defer out.Close()
+	tmpName := tmpFile.Name()
+	defer func() {
+		if tmpFile != nil {
+			tmpFile.Close()
+			os.Remove(tmpName)
+		}
+	}()
 
-	if _, err := io.Copy(out, br); err != nil {
+	if _, err := io.Copy(tmpFile, br); err != nil {
 		return "", fmt.Errorf("unzipCachedFile: couldn't copy file to final destination: %w", err)
 	}
 
-	// Make file executable.
-	if err := out.Chmod(0777); err != nil {
+	// Make file executable before renaming.
+	if err := tmpFile.Chmod(0755); err != nil {
 		return "", fmt.Errorf("unzipCachedFile: couldn't make output file executable: %w", err)
 	}
+
+	if err := tmpFile.Close(); err != nil {
+		return "", err
+	}
+	tmpFile = nil
+
+	if err := os.Rename(tmpName, output); err != nil {
+		os.Remove(tmpName)
+		return "", fmt.Errorf("unzipCachedFile: couldn't rename to final destination: %w", err)
+	}
+
 	return output, nil
+}
+
+func withCacheLock(lockDir string, fn func() error) error {
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		err := os.Mkdir(lockDir, 0755)
+		if err == nil {
+			defer os.Remove(lockDir)
+			return fn()
+		}
+		if time.Now().After(deadline) {
+			// Break stale lock if expired
+			_ = os.Remove(lockDir)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 type Options struct {
@@ -183,6 +245,30 @@ var (
 	cache   = map[Options]*Handle{}
 )
 
+type endpointDetector struct {
+	mu           sync.Mutex
+	endpointChan chan string
+	found        bool
+}
+
+func (d *endpointDetector) Write(p []byte) (n int, err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	os.Stdout.Write(p)
+	if !d.found {
+		s := string(p)
+		if idx := strings.Index(s, "endpoint="); idx != -1 {
+			after := s[idx+len("endpoint="):]
+			fields := strings.Fields(after)
+			if len(fields) > 0 {
+				d.found = true
+				d.endpointChan <- strings.Trim(fields[0], "\"\r\n\t")
+			}
+		}
+	}
+	return len(p), nil
+}
+
 // Start downloads and begins a prism process.
 //
 // Returns a cancellation function to be called once the process is no
@@ -191,79 +277,99 @@ func Start(ctx context.Context, opts Options) (*Handle, error) {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
 	if h, ok := cache[opts]; ok {
-		// Probably not safe, but
 		if h.cmd.ProcessState == nil {
 			return h, nil
 		}
 		delete(cache, opts)
 	}
 
+	var bin string
 	localPath := opts.Location
 	if localPath == "" {
 		url := constructDownloadPath(beamVersion, beamVersion)
 
-		// Ensure the cache exists.
-		if err := os.MkdirAll(prismBinCache, 0777); err != nil {
+		if err := os.MkdirAll(prismBinCache, 0755); err != nil {
 			return nil, err
 		}
 		basename := path.Base(url)
 		localPath = filepath.Join(prismBinCache, basename)
-		// Check if the zip is already in the cache.
-		if _, err := os.Stat(localPath); err != nil {
-			// Assume the file doesn't exist.
-			if err := downloadToCache(url, localPath); err != nil {
-				return nil, fmt.Errorf("couldn't download %v to cache %s: %w", url, localPath, err)
+		lockDir := filepath.Join(prismCache, "download.lock")
+
+		err := withCacheLock(lockDir, func() error {
+			expectedBin := filepath.Join(prismBinCache, strings.TrimSuffix(basename, ".zip"))
+			if fi, err := os.Stat(expectedBin); err == nil && fi.Size() > 0 {
+				_ = os.Chmod(expectedBin, 0755)
+				bin = expectedBin
+				return nil
 			}
+
+			fi, err := os.Stat(localPath)
+			if err != nil || fi.Size() == 0 {
+				if err := downloadToCache(url, localPath); err != nil {
+					return fmt.Errorf("couldn't download %v to cache %s: %w", url, localPath, err)
+				}
+			}
+
+			extracted, err := unzipCachedFile(localPath, prismBinCache)
+			if err != nil {
+				_ = os.Remove(localPath)
+				return fmt.Errorf("couldn't unzip %q: %w", localPath, err)
+			}
+			bin = extracted
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if strings.HasSuffix(localPath, ".zip") {
+			extracted, err := unzipCachedFile(localPath, prismBinCache)
+			if err != nil {
+				return nil, fmt.Errorf("couldn't unzip custom location %q: %w", localPath, err)
+			}
+			bin = extracted
+		} else {
+			if _, err := os.Stat(localPath); err != nil {
+				return nil, fmt.Errorf("prism binary not found at %q: %w", localPath, err)
+			}
+			_ = os.Chmod(localPath, 0755)
+			bin = localPath
 		}
 	}
-	bin, err := unzipCachedFile(localPath, prismBinCache)
-	if err != nil {
-		if !errors.Is(err, zip.ErrFormat) {
-			return nil, fmt.Errorf("couldn't unzip %q: %w", localPath, err)
-		}
-		// If it's a format error, assume it's an executable.
-		bin = localPath
-	}
+
 	args := []string{
 		"--idle_shutdown_timeout=5s",
 		"--serve_http=false",
-	}
-	var cmd *exec.Cmd
-	var port string
-	var startErr error
-
-	for range 5 {
-		port = opts.Port
-		if port == "" {
-			port = pickPort()
-		}
-		cmdArgs := append(slices.Clone(args), "--job_port="+port)
-		cmd = exec.Command(bin, cmdArgs...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Start(); err != nil {
-			startErr = err
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-
-		// Wait briefly to confirm server didn't immediately crash due to port bind error
-		time.Sleep(50 * time.Millisecond)
-		if cmd.ProcessState != nil && !cmd.ProcessState.Success() {
-			startErr = fmt.Errorf("prism exited immediately")
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-		startErr = nil
-		break
+		"--log_kind=text",
 	}
 
-	if startErr != nil {
-		return nil, fmt.Errorf("couldn't start command %q: %w", bin, startErr)
+	port := opts.Port
+	if port == "" {
+		port = "0"
+	}
+	cmdArgs := append(slices.Clone(args), "--job_port="+port)
+	cmd := exec.Command(bin, cmdArgs...)
+
+	detector := &endpointDetector{
+		endpointChan: make(chan string, 1),
+	}
+	cmd.Stdout = detector
+	cmd.Stderr = detector
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("couldn't start command %q: %w", bin, err)
+	}
+
+	var addr string
+	select {
+	case addr = <-detector.endpointChan:
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		return nil, fmt.Errorf("timed out waiting for prism endpoint on startup")
 	}
 
 	handle := &Handle{
-		addr: "localhost:" + port,
+		addr: addr,
 		cancelFn: func() {
 			cmd.Process.Kill()
 		},

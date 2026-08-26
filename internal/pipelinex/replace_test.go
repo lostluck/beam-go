@@ -329,7 +329,7 @@ func BenchmarkComputeInputOutput(b *testing.B) {
 	}
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		computeCompositeInputOutput(in)
 	}
 }
@@ -496,4 +496,3 @@ func TestTrimCoders(t *testing.T) {
 		t.Errorf("unreferenced c4 should have been trimmed")
 	}
 }
-

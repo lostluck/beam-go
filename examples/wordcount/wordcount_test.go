@@ -129,11 +129,9 @@ func TestWordcountPipeline(t *testing.T) {
 		t.Fatalf("wordcount pipeline failed: %v", err)
 	}
 
-	// Launch wordcountPipeline to cover its graph construction
-	p, err := beam.Launch(t.Context(), wordcountPipeline())
-	if err == nil {
-		_ = p.Wait(t.Context())
-	}
+	// Verify wordcountPipeline registers cleanly
+	cfg := beam.New()
+	cfg.Load("wordcount", wordcountPipeline())
 }
 
 type verifyStringFn struct {

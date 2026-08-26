@@ -89,6 +89,11 @@ func TestDownloadToCache(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
+	blockerFile := filepath.Join(tmpDir, "blocker.txt")
+	if err := os.WriteFile(blockerFile, []byte("blocker"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	tests := []struct {
 		name        string
 		url         string
@@ -112,7 +117,7 @@ func TestDownloadToCache(t *testing.T) {
 		{
 			name:     "invalid_dest_path",
 			url:      ts.URL + "/ok",
-			destPath: filepath.Join(tmpDir, "nonexistent-dir", "sub", "bad.zip"),
+			destPath: filepath.Join(blockerFile, "sub", "bad.zip"),
 			wantErr:  true,
 		},
 	}
@@ -196,6 +201,27 @@ func TestUnzipCachedFile(t *testing.T) {
 		},
 	}
 
+	// Create an empty zip file (valid format, but 0 entries)
+	var emptyBuf bytes.Buffer
+	emptyZw := zip.NewWriter(&emptyBuf)
+	emptyZw.Close()
+	emptyZip := filepath.Join(tmpDir, "empty.zip")
+	os.WriteFile(emptyZip, emptyBuf.Bytes(), 0644)
+
+	tests = append(tests, struct {
+		name     string
+		srcZip   string
+		destDir  string
+		wantErr  bool
+		wantBase string
+		errIs    error
+	}{
+		name:    "empty_zip_entries",
+		srcZip:  emptyZip,
+		destDir: outDir,
+		wantErr: true,
+	})
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			extracted, err := unzipCachedFile(tc.srcZip, tc.destDir)
@@ -209,6 +235,31 @@ func TestUnzipCachedFile(t *testing.T) {
 				t.Errorf("extracted binary = %s, want base %s", extracted, tc.wantBase)
 			}
 		})
+	}
+}
+
+func TestWithCacheLock(t *testing.T) {
+	tmpDir := t.TempDir()
+	lockDir := filepath.Join(tmpDir, "test.lock")
+
+	called := false
+	err := withCacheLock(lockDir, func() error {
+		called = true
+		// Verify lockDir exists during callback
+		if _, err := os.Stat(lockDir); err != nil {
+			t.Errorf("expected lockDir to exist during callback")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withCacheLock failed: %v", err)
+	}
+	if !called {
+		t.Errorf("callback not called")
+	}
+	// Verify lockDir removed after callback
+	if _, err := os.Stat(lockDir); err == nil {
+		t.Errorf("expected lockDir to be removed after callback")
 	}
 }
 
