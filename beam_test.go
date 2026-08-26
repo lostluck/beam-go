@@ -778,8 +778,9 @@ func (m *mockNextBuf) Close() error { return nil }
 
 func TestUtilSeq_Concat_And_Closures(t *testing.T) {
 	it1 := func(yield func(int) bool) {
-		yield(1)
-		yield(2)
+		if yield(1) {
+			yield(2)
+		}
 	}
 	it2 := func(yield func(int) bool) {
 		yield(3)
