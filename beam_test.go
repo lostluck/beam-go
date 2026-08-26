@@ -479,7 +479,7 @@ func TestPair_And_ElmC(t *testing.T) {
 	}
 
 	now := time.Now()
-	ec := ElmC{elmContext: elmContext{eventTime: now}}
+	ec := ElmC{eventTime: now}
 	if ec.EventTime() != now {
 		t.Errorf("EventTime() = %v, want %v", ec.EventTime(), now)
 	}
@@ -878,5 +878,45 @@ func TestEdgeFlatten_Methods(t *testing.T) {
 	_, _, _, first2 := ef.flatten()
 	if first2 {
 		t.Errorf("second call to flatten() should have first = false")
+	}
+}
+
+type sliceSourceFn struct {
+	Output PCol[[]string]
+}
+
+func (fn *sliceSourceFn) ProcessBundle(dfc *DFC[[]byte]) error {
+	return dfc.Process(func(ec ElmC, _ []byte) error {
+		fn.Output.Emit(ec, []string{"alpha", "beta", "gamma"})
+		fn.Output.Emit(ec, []string{"one", "two"})
+		return nil
+	})
+}
+
+type sliceTransformFn struct {
+	Output PCol[[]int]
+}
+
+func (fn *sliceTransformFn) ProcessBundle(dfc *DFC[[]string]) error {
+	return dfc.Process(func(ec ElmC, elm []string) error {
+		lengths := make([]int, len(elm))
+		for i, s := range elm {
+			lengths[i] = len(s)
+		}
+		fn.Output.Emit(ec, lengths)
+		return nil
+	})
+}
+
+func TestSlicePipeline(t *testing.T) {
+	_, err := LaunchAndWait(t.Context(), func(s *Scope) error {
+		imp := Impulse(s)
+		src := ParDo(s, imp, &sliceSourceFn{})
+		lengths := ParDo(s, src.Output, &sliceTransformFn{})
+		ParDo(s, lengths.Output, &DiscardFn[[]int]{})
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Errorf("Slice pipeline failed: %v", err)
 	}
 }

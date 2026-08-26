@@ -295,7 +295,14 @@ func putCoder(coders map[string]*pipepb.Coder, urn string, payload []byte, compo
 func addCoder[E any](intern map[string]string, coders map[string]*pipepb.Coder) string {
 	var t E
 	at := any(t)
+	if at, ok := at.(structuralCoder); ok {
+		return at.addCoder(intern, coders)
+	}
 	rt := reflect.TypeOf(t)
+	return addCoderType(rt, intern, coders)
+}
+
+func addCoderType(rt reflect.Type, intern map[string]string, coders map[string]*pipepb.Coder) string {
 	if rt.Kind() == reflect.Pointer {
 		rt = rt.Elem()
 	}
@@ -303,31 +310,35 @@ func addCoder[E any](intern map[string]string, coders map[string]*pipepb.Coder) 
 		return id
 	}
 
-	var urn string
-	if at, ok := at.(structuralCoder); ok {
-		return at.addCoder(intern, coders)
-	}
-
 	switch rt.Kind() {
 	case reflect.Slice:
 		if rt.Elem().Kind() == reflect.Uint8 {
-			urn = "beam:coder:bytes:v1"
+			return putCoder(coders, "beam:coder:bytes:v1", nil, nil)
 		}
+		elemCoderID := addCoderType(rt.Elem(), intern, coders)
+		return putCoder(coders, "beam:coder:iterable:v1", nil, []string{elemCoderID})
 	case reflect.Bool:
-		urn = "beam:coder:bool:v1"
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		urn = "beam:coder:varint:v1"
+		return putCoder(coders, "beam:coder:bool:v1", nil, nil)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return putCoder(coders, "beam:coder:varint:v1", nil, nil)
 	case reflect.Float32, reflect.Float64:
-		urn = "beam:coder:double:v1"
+		return putCoder(coders, "beam:coder:double:v1", nil, nil)
 	case reflect.String:
-		urn = "beam:coder:string_utf8:v1"
+		return putCoder(coders, "beam:coder:string_utf8:v1", nil, nil)
 	case reflect.Struct:
 		return addRowCoder(rt, intern, coders)
 	default:
-		panic(fmt.Sprintf("unknown coder type: generic %T, resolved %v", t, rt))
-	}
 
-	return putCoder(coders, urn, nil, nil)
+		// TODO
+		// urnLengthPrefixCoder        = "beam:coder:length_prefix:v1"
+		// urnStateBackedIterableCoder = "beam:coder:state_backed_iterable:v1"
+		// urnWindowedValueCoder       = "beam:coder:windowed_value:v1"
+		// urnParamWindowedValueCoder  = "beam:coder:param_windowed_value:v1"
+		// urnTimerCoder               = "beam:coder:timer:v1"
+		// urnNullableCoder            = "beam:coder:nullable:v1"
+		panic(fmt.Sprintf("unknown coder type: resolved %v", rt))
+	}
 
 	// TODO
 	// urnLengthPrefixCoder        = "beam:coder:length_prefix:v1"

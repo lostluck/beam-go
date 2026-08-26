@@ -177,7 +177,7 @@ func TestStateOrderedList_Unit(t *testing.T) {
 		cache: newStateCache[[]orderedEntry[int]](),
 		coder: coders.MakeCoder[int](),
 	}
-	ec := ElmC{elmContext: elmContext{keyBytes: "key", winBytes: "win", eventTime: time.UnixMilli(500)}}
+	ec := ElmC{keyBytes: "key", winBytes: "win", eventTime: time.UnixMilli(500)}
 
 	// Append without timestamp uses ec.eventTime
 	sol.Append(ec, 100)

@@ -16,6 +16,7 @@
 package coders
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -107,8 +108,30 @@ func TestMakeCoder(t *testing.T) {
 		roundTripMakeCoder("squeamish ossifrage"),
 		roundTripMakeCoder([]byte{8, 3, 7, 4, 6, 0, 9}),
 
+		// Slices
+		roundTripMakeCoder([]int{1, 2, 3, -4, 5}),
+		roundTripMakeCoder([]int8{1, 2, -3}),
+		roundTripMakeCoder([]int16{10, 20, -30}),
+		roundTripMakeCoder([]int32{100, 200, -300}),
+		roundTripMakeCoder([]int64{1000, 2000, -3000}),
+		roundTripMakeCoder([]uint{11, 22, 33}),
+		roundTripMakeCoder([]uint16{111, 222}),
+		roundTripMakeCoder([]uint32{1111, 2222}),
+		roundTripMakeCoder([]uint64{11111, 22222}),
+		roundTripMakeCoder([]bool{true, false, true}),
+		roundTripMakeCoder([]float32{1.5, 2.5, -3.5}),
+		roundTripMakeCoder([]float64{1.234, 5.678, -9.1011}),
+		roundTripMakeCoder([]complex64{1 + 2i, 3 + 4i}),
+		roundTripMakeCoder([]complex128{5 + 6i, 7 + 8i}),
+		roundTripMakeCoder([]string{"hello", "world", "beam", "go"}),
+		roundTripMakeCoder([][]byte{[]byte("foo"), []byte("bar")}),
+		roundTripMakeCoder([][]int{{1, 2}, {3, 4, 5}, {}}),
+		roundTripMakeCoder([]time.Time{time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC)}),
+		roundTripMakeCoder([]struct{ Name string; Val int }{{Name: "a", Val: 1}, {Name: "b", Val: 2}}),
+		roundTripMakeCoder(struct{ List []string; Tags []int }{List: []string{"a", "b"}, Tags: []int{10, 20}}),
+		roundTripMakeCoder([]string{}),
+
 		// TODO: Arrays
-		// TODO: Slices
 		// TODO: Maps
 
 		// Row coder tests
@@ -134,7 +157,8 @@ func TestMakeCoder(t *testing.T) {
 		manualRoundTripCoder(must(time.Parse("2006-01-02", "2024-01-21")), (*Encoder).Timestamp, (*Decoder).Timestamp),
 	}
 	for _, test := range tests {
-		t.Run(reflect.TypeOf(test.val).Name(), func(t *testing.T) {
+		name := reflect.TypeOf(test.val).String()
+		t.Run(name, func(t *testing.T) {
 			got, want := test.coder(test.val), test.val
 			var opts []cmp.Option
 			switch reflect.TypeOf(test.val).Kind() {
@@ -261,5 +285,212 @@ func TestCoders_Panics(t *testing.T) {
 		}()
 		_ = dec2.Read(5)
 	}()
+
+	// Slice coder negative length panic
+	enc := NewEncoder()
+	enc.Int32(-1)
+	sc := MakeCoder[[]int]()
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("expected Decode on negative slice length to panic")
+			}
+		}()
+		dec := NewDecoder(enc.Data())
+		_ = sc.Decode(dec)
+	}()
+}
+
+func TestMakeSliceCoder_NilSlice(t *testing.T) {
+	c := MakeCoder[[]string]()
+	var nilSlice []string
+	data := Encode(c, nilSlice)
+	got := Decode(c, data)
+	if len(got) != 0 {
+		t.Errorf("expected empty slice, got %v", got)
+	}
+}
+
+func TestMakeSliceCoder_Explicit(t *testing.T) {
+	// Explicit elemCoder
+	intCoder := MakeCoder[int]()
+	sc := MakeSliceCoder[int](intCoder)
+	in := []int{10, 20, 30, 40}
+	data := Encode(sc, in)
+	got := Decode(sc, data)
+	if d := cmp.Diff(in, got); d != "" {
+		t.Errorf("MakeSliceCoder explicit roundtrip diff (-want, +got):\n%v", d)
+	}
+
+	// Implicit nil elemCoder
+	scNil := MakeSliceCoder[string](nil)
+	inStr := []string{"foo", "bar", "baz"}
+	dataStr := Encode(scNil, inStr)
+	gotStr := Decode(scNil, dataStr)
+	if d := cmp.Diff(inStr, gotStr); d != "" {
+		t.Errorf("MakeSliceCoder nil elemCoder roundtrip diff (-want, +got):\n%v", d)
+	}
+}
+
+func BenchmarkSliceCoder(b *testing.B) {
+	sizes := []int{10, 100, 1000}
+	for _, size := range sizes {
+		// []int
+		intData := make([]int, size)
+		for i := range intData {
+			intData[i] = i * 100
+		}
+		genIntCoder := MakeSliceCoder[int](nil)
+		refIntCoder := makeSliceCoder[[]int](reflect.TypeFor[[]int]()).(Coder[[]int])
+		encIntGen := Encode(genIntCoder, intData)
+		encIntRef := Encode(refIntCoder, intData)
+
+		b.Run(fmt.Sprintf("int/size_%d/generic_encode", size), func(b *testing.B) {
+			b.ReportAllocs()
+			enc := NewEncoder()
+			for b.Loop() {
+				enc.Reset(0)
+				genIntCoder.Encode(enc, intData)
+			}
+		})
+		b.Run(fmt.Sprintf("int/size_%d/reflective_encode", size), func(b *testing.B) {
+			b.ReportAllocs()
+			enc := NewEncoder()
+			for b.Loop() {
+				enc.Reset(0)
+				refIntCoder.Encode(enc, intData)
+			}
+		})
+		b.Run(fmt.Sprintf("int/size_%d/generic_decode", size), func(b *testing.B) {
+			b.ReportAllocs()
+			dec := NewDecoder(encIntGen)
+			for b.Loop() {
+				dec.data = encIntGen
+				_ = genIntCoder.Decode(dec)
+			}
+		})
+		b.Run(fmt.Sprintf("int/size_%d/reflective_decode", size), func(b *testing.B) {
+			b.ReportAllocs()
+			dec := NewDecoder(encIntRef)
+			for b.Loop() {
+				dec.data = encIntRef
+				_ = refIntCoder.Decode(dec)
+			}
+		})
+
+		// []string
+		strData := make([]string, size)
+		for i := range strData {
+			strData[i] = fmt.Sprintf("value-%d", i)
+		}
+		genStrCoder := MakeSliceCoder[string](nil)
+		refStrCoder := makeSliceCoder[[]string](reflect.TypeFor[[]string]()).(Coder[[]string])
+		encStrGen := Encode(genStrCoder, strData)
+		encStrRef := Encode(refStrCoder, strData)
+
+		b.Run(fmt.Sprintf("string/size_%d/generic_encode", size), func(b *testing.B) {
+			b.ReportAllocs()
+			enc := NewEncoder()
+			for b.Loop() {
+				enc.Reset(0)
+				genStrCoder.Encode(enc, strData)
+			}
+		})
+		b.Run(fmt.Sprintf("string/size_%d/reflective_encode", size), func(b *testing.B) {
+			b.ReportAllocs()
+			enc := NewEncoder()
+			for b.Loop() {
+				enc.Reset(0)
+				refStrCoder.Encode(enc, strData)
+			}
+		})
+		b.Run(fmt.Sprintf("string/size_%d/generic_decode", size), func(b *testing.B) {
+			b.ReportAllocs()
+			dec := NewDecoder(encStrGen)
+			for b.Loop() {
+				dec.data = encStrGen
+				_ = genStrCoder.Decode(dec)
+			}
+		})
+		b.Run(fmt.Sprintf("string/size_%d/reflective_decode", size), func(b *testing.B) {
+			b.ReportAllocs()
+			dec := NewDecoder(encStrRef)
+			for b.Loop() {
+				dec.data = encStrRef
+				_ = refStrCoder.Decode(dec)
+			}
+		})
+	}
+}
+
+type benchmarkRecord struct {
+	ID    int
+	Name  string
+	Score float64
+}
+
+type genericBenchmarkRecordCoder struct{}
+
+func (genericBenchmarkRecordCoder) Encode(enc *Encoder, v benchmarkRecord) {
+	enc.Varint(3)
+	enc.Varint(uint64(v.ID))
+	enc.StringUtf8(v.Name)
+	enc.Double(v.Score)
+}
+
+func (genericBenchmarkRecordCoder) Decode(dec *Decoder) benchmarkRecord {
+	_ = dec.Varint()
+	return benchmarkRecord{
+		ID:    int(dec.Varint()),
+		Name:  dec.StringUtf8(),
+		Score: dec.Double(),
+	}
+}
+
+func BenchmarkStructCoder(b *testing.B) {
+	rec := benchmarkRecord{
+		ID:    12345,
+		Name:  "test-record-name-12345",
+		Score: 98.7654,
+	}
+
+	genCoder := genericBenchmarkRecordCoder{}
+	refCoder := makeRowCoder[benchmarkRecord](reflect.TypeFor[benchmarkRecord]()).(Coder[benchmarkRecord])
+
+	encGen := Encode(genCoder, rec)
+	encRef := Encode(refCoder, rec)
+
+	b.Run("generic_encode", func(b *testing.B) {
+		b.ReportAllocs()
+		enc := NewEncoder()
+		for b.Loop() {
+			enc.Reset(0)
+			genCoder.Encode(enc, rec)
+		}
+	})
+	b.Run("reflective_encode", func(b *testing.B) {
+		b.ReportAllocs()
+		enc := NewEncoder()
+		for b.Loop() {
+			enc.Reset(0)
+			refCoder.Encode(enc, rec)
+		}
+	})
+	b.Run("generic_decode", func(b *testing.B) {
+		b.ReportAllocs()
+		dec := NewDecoder(encGen)
+		for b.Loop() {
+			dec.data = encGen
+			_ = genCoder.Decode(dec)
+		}
+	})
+	b.Run("reflective_decode", func(b *testing.B) {
+		b.ReportAllocs()
+		dec := NewDecoder(encRef)
+		for b.Loop() {
+			dec.data = encRef
+			_ = refCoder.Decode(dec)
+		}
+	})
 }
 

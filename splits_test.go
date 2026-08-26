@@ -430,19 +430,6 @@ func (fn *sepHarnessBase[E]) block() {
 	<-c
 }
 
-// delay inform the DoFn whether or not to return a delayed Processing continuation for this position.
-func (fn *sepHarnessBase[E]) delay() bool {
-	sepClientMu.Lock()
-	defer sepClientMu.Unlock()
-	var delay bool
-	err := sepClient.Call("Watchers.Delay", &Args{WatcherID: fn.WatcherID}, &delay)
-	if err != nil {
-		slog.Error("Watchers.Delay error", slog.Any("error", err))
-		panic(err)
-	}
-	return delay
-}
-
 // sepHarness is a simple DoFn that blocks when reaching a sentinel.
 // It's useful for testing blocks on channel splits.
 type sepHarness[E comparable] struct {

@@ -269,8 +269,8 @@ func (d *endpointDetector) Write(p []byte) (n int, err error) {
 	_, _ = os.Stdout.Write(p)
 	if !d.found {
 		s := string(p)
-		if idx := strings.Index(s, "endpoint="); idx != -1 {
-			after := s[idx+len("endpoint="):]
+		if _, after, ok := strings.Cut(s, "endpoint="); ok {
+			after := after
 			fields := strings.Fields(after)
 			if len(fields) > 0 {
 				d.found = true

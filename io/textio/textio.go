@@ -136,13 +136,13 @@ type restFac struct{}
 // So we want to restrict it to be a pointer type.
 func (restFac) Setup() error { return nil }
 
-const (
-	// blockSize is the desired size of each block for initial splits.
-	blockSize int64 = 64 * 1024 * 1024 // 64 MB
-	// tooSmall is the size limit for a block. If the last block is smaller than
-	// this, it gets merged with the previous block.
-	tooSmall = blockSize / 4
-)
+// const (
+// 	// blockSize is the desired size of each block for initial splits.
+// 	blockSize int64 = 64 * 1024 * 1024 // 64 MB
+// 	// tooSmall is the size limit for a block. If the last block is smaller than
+// 	// this, it gets merged with the previous block.
+// 	tooSmall = blockSize / 4
+// )
 
 func (restFac) InitialSplit(e blobio.ReadableBlob, r beam.OffsetRange) iter.Seq2[beam.OffsetRange, float64] {
 	// TODO: Do smart splits.

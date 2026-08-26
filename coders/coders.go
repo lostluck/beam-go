@@ -50,17 +50,98 @@ type Codable interface {
 	Decode(dec *Decoder)
 }
 
+// MakeSliceCoder returns a fully typed generic Coder[[]E] with zero reflection during Encode/Decode.
+func MakeSliceCoder[E any](elemCoder Coder[E]) Coder[[]E] {
+	if elemCoder == nil {
+		elemCoder = MakeCoder[E]()
+	}
+	return &sliceCoder[E]{elemCoder: elemCoder}
+}
+
 // MakeCoder is a convenience function for primitive coders access.
 func MakeCoder[E any]() Coder[E] {
 	var e E
+	a := any(e)
+	switch a.(type) {
+	case bool:
+		return any(boolCoder{}).(Coder[E])
+	case int:
+		return any(varintCoder[int]{}).(Coder[E])
+	case int8:
+		return any(varintCoder[int8]{}).(Coder[E])
+	case int16:
+		return any(varintCoder[int16]{}).(Coder[E])
+	case int32:
+		return any(varintCoder[int32]{}).(Coder[E])
+	case int64:
+		return any(varintCoder[int64]{}).(Coder[E])
+	case uint:
+		return any(varintCoder[uint]{}).(Coder[E])
+	case uint8:
+		return any(byteCoder{}).(Coder[E])
+	case uint16:
+		return any(varintCoder[uint16]{}).(Coder[E])
+	case uint32:
+		return any(varintCoder[uint32]{}).(Coder[E])
+	case uint64:
+		return any(varintCoder[uint64]{}).(Coder[E])
+	case float32:
+		return any(floatCoder{}).(Coder[E])
+	case float64:
+		return any(doubleCoder{}).(Coder[E])
+	case complex64:
+		return any(complex64Coder{}).(Coder[E])
+	case complex128:
+		return any(complex128Coder{}).(Coder[E])
+	case string:
+		return any(stringCoder{}).(Coder[E])
+	case []byte:
+		return any(bytesCoder{}).(Coder[E])
+	case time.Time:
+		return any(timeCoder{}).(Coder[E])
+	case []bool:
+		return any(MakeSliceCoder(MakeCoder[bool]())).(Coder[E])
+	case []int:
+		return any(MakeSliceCoder(MakeCoder[int]())).(Coder[E])
+	case []int8:
+		return any(MakeSliceCoder(MakeCoder[int8]())).(Coder[E])
+	case []int16:
+		return any(MakeSliceCoder(MakeCoder[int16]())).(Coder[E])
+	case []int32:
+		return any(MakeSliceCoder(MakeCoder[int32]())).(Coder[E])
+	case []int64:
+		return any(MakeSliceCoder(MakeCoder[int64]())).(Coder[E])
+	case []uint:
+		return any(MakeSliceCoder(MakeCoder[uint]())).(Coder[E])
+	case []uint16:
+		return any(MakeSliceCoder(MakeCoder[uint16]())).(Coder[E])
+	case []uint32:
+		return any(MakeSliceCoder(MakeCoder[uint32]())).(Coder[E])
+	case []uint64:
+		return any(MakeSliceCoder(MakeCoder[uint64]())).(Coder[E])
+	case []float32:
+		return any(MakeSliceCoder(MakeCoder[float32]())).(Coder[E])
+	case []float64:
+		return any(MakeSliceCoder(MakeCoder[float64]())).(Coder[E])
+	case []complex64:
+		return any(MakeSliceCoder(MakeCoder[complex64]())).(Coder[E])
+	case []complex128:
+		return any(MakeSliceCoder(MakeCoder[complex128]())).(Coder[E])
+	case []string:
+		return any(MakeSliceCoder(MakeCoder[string]())).(Coder[E])
+	case [][]byte:
+		return any(MakeSliceCoder(MakeCoder[[]byte]())).(Coder[E])
+	case []time.Time:
+		return any(MakeSliceCoder(MakeCoder[time.Time]())).(Coder[E])
+	}
 	rt := reflect.TypeOf(e)
 	if rt.Kind() == reflect.Struct {
 		return makeRowCoder[E](rt).(Coder[E])
 	}
-	// if rt.Kind() == reflect.Slice {
-	// 	return makeSliceCoder[E](rt).(Coder[E])
-	// }
-	return makeCoder(reflect.TypeOf(e)).(Coder[E])
+	if rt.Kind() == reflect.Slice {
+		return makeSliceCoder[E](rt).(Coder[E])
+	}
+	return makeCoder(rt).(Coder[E])
 }
 
 // makeCoder works around generic coding.
@@ -123,7 +204,6 @@ func buildRowCoder[C rowStructCoderBuilder](c C, rt reflect.Type) C {
 	switch rt {
 	case rtTimeTime:
 		c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
-			//fmt.Printf("rt %v %T\n", rt, c)
 			t := rv.Interface().(time.Time)
 			mar, _ := t.MarshalText()
 			enc.Bytes(mar)
@@ -147,12 +227,61 @@ func buildRowCoder[C rowStructCoderBuilder](c C, rt reflect.Type) C {
 			continue
 		}
 		switch sf.Type.Kind() {
-		case reflect.Int, reflect.Int16, reflect.Int32, reflect.Int64:
+		case reflect.Bool:
+			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
+				enc.Bool(rv.Bool())
+			})
+			c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
+				rv.SetBool(dec.Bool())
+			})
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
 				enc.Varint(uint64(rv.Int()))
 			})
 			c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
 				rv.SetInt(int64(dec.Varint()))
+			})
+		case reflect.Uint, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
+				enc.Varint(rv.Uint())
+			})
+			c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
+				rv.SetUint(dec.Varint())
+			})
+		case reflect.Uint8:
+			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
+				enc.Byte(byte(rv.Uint()))
+			})
+			c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
+				rv.SetUint(uint64(dec.Byte()))
+			})
+		case reflect.Float32:
+			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
+				enc.Float(float32(rv.Float()))
+			})
+			c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
+				rv.SetFloat(float64(dec.Float()))
+			})
+		case reflect.Float64:
+			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
+				enc.Double(rv.Float())
+			})
+			c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
+				rv.SetFloat(dec.Double())
+			})
+		case reflect.Complex64:
+			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
+				enc.Complex64(complex64(rv.Complex()))
+			})
+			c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
+				rv.SetComplex(complex128(dec.Complex64()))
+			})
+		case reflect.Complex128:
+			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
+				enc.Complex128(rv.Complex())
+			})
+			c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
+				rv.SetComplex(dec.Complex128())
 			})
 		case reflect.String:
 			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
@@ -161,6 +290,39 @@ func buildRowCoder[C rowStructCoderBuilder](c C, rt reflect.Type) C {
 			c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
 				rv.SetString(dec.StringUtf8())
 			})
+		case reflect.Slice:
+			if sf.Type.Elem().Kind() == reflect.Uint8 {
+				c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
+					enc.Bytes(rv.Bytes())
+				})
+				c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
+					rv.SetBytes(dec.Bytes())
+				})
+			} else {
+				elemEnc, elemDec := buildElemFuncs(sf.Type.Elem())
+				c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
+					if !rv.IsValid() || rv.IsNil() {
+						enc.Int32(0)
+						return
+					}
+					n := rv.Len()
+					enc.Int32(int32(n))
+					for i := range n {
+						elemEnc(enc, rv.Index(i))
+					}
+				})
+				c.appendDecoder(func(dec *Decoder, rv reflect.Value) {
+					n := int(dec.Int32())
+					if n < 0 {
+						panic(makeDecodeError("invalid slice length: %d", n))
+					}
+					res := reflect.MakeSlice(sf.Type, n, n)
+					for i := range n {
+						res.Index(i).Set(elemDec(dec))
+					}
+					rv.Set(res)
+				})
+			}
 		case reflect.Struct:
 			nrc := buildRowCoder(&rowStructCoderNested{rt: sf.Type}, sf.Type)
 			c.appendEncoder(func(enc *Encoder, rv reflect.Value) {
@@ -174,6 +336,84 @@ func buildRowCoder[C rowStructCoderBuilder](c C, rt reflect.Type) C {
 		}
 	}
 	return c
+}
+
+func buildElemFuncs(elemRT reflect.Type) (func(enc *Encoder, rv reflect.Value), func(dec *Decoder) reflect.Value) {
+	if elemRT == rtTimeTime {
+		return func(enc *Encoder, rv reflect.Value) {
+				t := rv.Interface().(time.Time)
+				mar, _ := t.MarshalText()
+				enc.Bytes(mar)
+			}, func(dec *Decoder) reflect.Value {
+				var t time.Time
+				if err := t.UnmarshalText(dec.Bytes()); err != nil {
+					panic(makeDecodeError("error decoding time.Time: %w", err))
+				}
+				return reflect.ValueOf(t)
+			}
+	}
+	switch elemRT.Kind() {
+	case reflect.Bool:
+		return func(enc *Encoder, rv reflect.Value) { enc.Bool(rv.Bool()) },
+			func(dec *Decoder) reflect.Value { return reflect.ValueOf(dec.Bool()).Convert(elemRT) }
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return func(enc *Encoder, rv reflect.Value) { enc.Varint(uint64(rv.Int())) },
+			func(dec *Decoder) reflect.Value { return reflect.ValueOf(int64(dec.Varint())).Convert(elemRT) }
+	case reflect.Uint, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return func(enc *Encoder, rv reflect.Value) { enc.Varint(rv.Uint()) },
+			func(dec *Decoder) reflect.Value { return reflect.ValueOf(dec.Varint()).Convert(elemRT) }
+	case reflect.Uint8:
+		return func(enc *Encoder, rv reflect.Value) { enc.Byte(byte(rv.Uint())) },
+			func(dec *Decoder) reflect.Value { return reflect.ValueOf(dec.Byte()).Convert(elemRT) }
+	case reflect.Float32:
+		return func(enc *Encoder, rv reflect.Value) { enc.Float(float32(rv.Float())) },
+			func(dec *Decoder) reflect.Value { return reflect.ValueOf(dec.Float()).Convert(elemRT) }
+	case reflect.Float64:
+		return func(enc *Encoder, rv reflect.Value) { enc.Double(rv.Float()) },
+			func(dec *Decoder) reflect.Value { return reflect.ValueOf(dec.Double()).Convert(elemRT) }
+	case reflect.Complex64:
+		return func(enc *Encoder, rv reflect.Value) { enc.Complex64(complex64(rv.Complex())) },
+			func(dec *Decoder) reflect.Value { return reflect.ValueOf(dec.Complex64()).Convert(elemRT) }
+	case reflect.Complex128:
+		return func(enc *Encoder, rv reflect.Value) { enc.Complex128(rv.Complex()) },
+			func(dec *Decoder) reflect.Value { return reflect.ValueOf(dec.Complex128()).Convert(elemRT) }
+	case reflect.String:
+		return func(enc *Encoder, rv reflect.Value) { enc.StringUtf8(rv.String()) },
+			func(dec *Decoder) reflect.Value { return reflect.ValueOf(dec.StringUtf8()).Convert(elemRT) }
+	case reflect.Slice:
+		if elemRT.Elem().Kind() == reflect.Uint8 {
+			return func(enc *Encoder, rv reflect.Value) { enc.Bytes(rv.Bytes()) },
+				func(dec *Decoder) reflect.Value { return reflect.ValueOf(dec.Bytes()) }
+		}
+		nestedElemEnc, nestedElemDec := buildElemFuncs(elemRT.Elem())
+		return func(enc *Encoder, rv reflect.Value) {
+				if !rv.IsValid() || rv.IsNil() {
+					enc.Int32(0)
+					return
+				}
+				n := rv.Len()
+				enc.Int32(int32(n))
+				for i := range n {
+					nestedElemEnc(enc, rv.Index(i))
+				}
+			}, func(dec *Decoder) reflect.Value {
+				n := int(dec.Int32())
+				if n < 0 {
+					panic(makeDecodeError("invalid slice length: %d", n))
+				}
+				res := reflect.MakeSlice(elemRT, n, n)
+				for i := range n {
+					res.Index(i).Set(nestedElemDec(dec))
+				}
+				return res
+			}
+	case reflect.Struct:
+		nrc := buildRowCoder(&rowStructCoderNested{rt: elemRT}, elemRT)
+		return func(enc *Encoder, rv reflect.Value) { nrc.Encode(enc, rv) },
+			func(dec *Decoder) reflect.Value { return nrc.Decode(dec) }
+	default:
+		panic("slice element type unknown: " + elemRT.Kind().String() + " for type " + elemRT.Name())
+	}
 }
 
 type rowStructCoderBuilder interface {
@@ -195,7 +435,6 @@ func (c *rowStructCoder[T]) appendDecoder(decFn func(dec *Decoder, rv reflect.Va
 }
 
 func (c *rowStructCoder[T]) Encode(enc *Encoder, v T) {
-	//	fmt.Printf("rowStructCoder[T].Encode %T %+v %v\n", c, v, len(c.fieldEncoders))
 	rv := reflect.ValueOf(v)
 	enc.Varint(uint64(rv.NumField()))
 	for i := 0; i < rv.NumField(); i++ {
@@ -222,7 +461,6 @@ func (c *rowStructCoder[T]) Decode(dec *Decoder) T {
 	return rv.Interface().(T)
 }
 
-// Is this the way to do nested types?
 type rowStructCoderNested struct {
 	rt            reflect.Type
 	fieldEncoders []func(enc *Encoder, rv reflect.Value)
@@ -238,10 +476,7 @@ func (c *rowStructCoderNested) appendDecoder(decFn func(dec *Decoder, rv reflect
 }
 
 func (c *rowStructCoderNested) Encode(enc *Encoder, rv reflect.Value) {
-	//	fmt.Println("rowStructCoderNested.Encode", c.rt, rv, len(c.fieldEncoders))
 	enc.Varint(uint64(rv.NumField()))
-	// This is the worst formulation.
-	// We need to be able to override types, but substitute them with arbitrary encoding structures.
 	switch rv.Type() {
 	case rtTimeTime:
 		c.fieldEncoders[0](enc, rv)
@@ -253,7 +488,6 @@ func (c *rowStructCoderNested) Encode(enc *Encoder, rv reflect.Value) {
 }
 
 func (c *rowStructCoderNested) Decode(dec *Decoder) reflect.Value {
-	// fmt.Println("rowStructCoderNested.Decode", c.rt, len(c.fieldDecoders))
 	rv := reflect.New(c.rt).Elem()
 	i := 0
 	defer func() {
@@ -262,8 +496,6 @@ func (c *rowStructCoderNested) Decode(dec *Decoder) reflect.Value {
 		}
 	}()
 	n := dec.Varint()
-	// This is the worst formulation.
-	// We need to be able to override types, but substitute them with arbitrary encoding structures.
 	switch rv.Type() {
 	case rtTimeTime:
 		c.fieldDecoders[0](dec, rv)
@@ -279,10 +511,67 @@ func (c *rowStructCoderNested) Decode(dec *Decoder) reflect.Value {
 }
 
 func makeSliceCoder[E any](rt reflect.Type) any {
-	panic("TODO makeSliceCoder is unimplemented")
+	elemEnc, elemDec := buildElemFuncs(rt.Elem())
+	return &reflectSliceCoder[E]{
+		sliceType: rt,
+		elemEnc:   elemEnc,
+		elemDec:   elemDec,
+	}
 }
 
-type sliceCoder[T any] struct{}
+type sliceCoder[E any] struct {
+	elemCoder Coder[E]
+}
+
+func (c *sliceCoder[E]) Encode(enc *Encoder, v []E) {
+	enc.Int32(int32(len(v)))
+	for _, elem := range v {
+		c.elemCoder.Encode(enc, elem)
+	}
+}
+
+func (c *sliceCoder[E]) Decode(dec *Decoder) []E {
+	n := dec.Int32()
+	if n < 0 {
+		panic(makeDecodeError("invalid slice length: %d", n))
+	}
+	res := make([]E, n)
+	for i := range res {
+		res[i] = c.elemCoder.Decode(dec)
+	}
+	return res
+}
+
+type reflectSliceCoder[T any] struct {
+	sliceType reflect.Type
+	elemEnc   func(enc *Encoder, rv reflect.Value)
+	elemDec   func(dec *Decoder) reflect.Value
+}
+
+func (c *reflectSliceCoder[T]) Encode(enc *Encoder, v T) {
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() || rv.IsNil() {
+		enc.Int32(0)
+		return
+	}
+	n := rv.Len()
+	enc.Int32(int32(n))
+	for i := range n {
+		c.elemEnc(enc, rv.Index(i))
+	}
+}
+
+func (c *reflectSliceCoder[T]) Decode(dec *Decoder) T {
+	n := int(dec.Int32())
+	if n < 0 {
+		panic(makeDecodeError("invalid slice length: %d", n))
+	}
+	res := reflect.MakeSlice(c.sliceType, n, n)
+	for i := range n {
+		res.Index(i).Set(c.elemDec(dec))
+	}
+	return res.Interface().(T)
+}
 
 type varintCoder[T constraints.Integer] struct{}
 
@@ -372,4 +661,19 @@ func (boolCoder) Encode(enc *Encoder, v bool) {
 
 func (boolCoder) Decode(dec *Decoder) bool {
 	return dec.Bool()
+}
+
+type timeCoder struct{}
+
+func (timeCoder) Encode(enc *Encoder, v time.Time) {
+	mar, _ := v.MarshalText()
+	enc.Bytes(mar)
+}
+
+func (timeCoder) Decode(dec *Decoder) time.Time {
+	var t time.Time
+	if err := t.UnmarshalText(dec.Bytes()); err != nil {
+		panic(makeDecodeError("error decoding time.Time: %w", err))
+	}
+	return t
 }
