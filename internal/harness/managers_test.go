@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,14 +29,19 @@ import (
 type fakeDataClientWithTimers struct {
 	recv    chan *fnpb.Elements
 	recvErr error
+	recvMu  sync.Mutex
 
 	send    chan *fnpb.Elements
 	sendErr error
+	sendMu  sync.Mutex
 }
 
 func (f *fakeDataClientWithTimers) Send(req *fnpb.Elements) error {
-	if f.sendErr != nil {
-		return f.sendErr
+	f.sendMu.Lock()
+	err := f.sendErr
+	f.sendMu.Unlock()
+	if err != nil {
+		return err
 	}
 	f.send <- req
 	return nil
@@ -46,8 +52,11 @@ func (f *fakeDataClientWithTimers) Recv() (*fnpb.Elements, error) {
 }
 
 func (f *fakeDataClientWithTimers) RecvMsg(m any) error {
-	if f.recvErr != nil {
-		return f.recvErr
+	f.recvMu.Lock()
+	err := f.recvErr
+	f.recvMu.Unlock()
+	if err != nil {
+		return err
 	}
 	msg, ok := <-f.recv
 	if !ok {
@@ -57,6 +66,18 @@ func (f *fakeDataClientWithTimers) RecvMsg(m any) error {
 	elem.Data = msg.Data
 	elem.Timers = msg.Timers
 	return nil
+}
+
+func (f *fakeDataClientWithTimers) setRecvErr(err error) {
+	f.recvMu.Lock()
+	defer f.recvMu.Unlock()
+	f.recvErr = err
+}
+
+func (f *fakeDataClientWithTimers) setSendErr(err error) {
+	f.sendMu.Lock()
+	defer f.sendMu.Unlock()
+	f.sendErr = err
 }
 
 func TestScopedDataManager_Lifecycle(t *testing.T) {
@@ -210,7 +231,7 @@ func TestDataChannel_ReadRecvMsg(t *testing.T) {
 	}
 
 	// Trigger error on read
-	fakeClient.recvErr = fmt.Errorf("read error")
+	fakeClient.setRecvErr(fmt.Errorf("read error"))
 	fakeClient.recv <- &fnpb.Elements{}
 	time.Sleep(50 * time.Millisecond)
 
