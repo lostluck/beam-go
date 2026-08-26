@@ -478,7 +478,7 @@ type StateChannel struct {
 	client stateClient
 
 	requests      chan *fnpb.StateRequest
-	nextRequestNo int32
+	nextRequestNo atomic.Int32
 
 	responses map[string]chan<- *fnpb.StateResponse
 	mu        sync.Mutex
@@ -613,7 +613,7 @@ func (c *StateChannel) write(ctx context.Context) {
 
 // Send sends a state request and returns the response.
 func (c *StateChannel) Send(req *fnpb.StateRequest) (*fnpb.StateResponse, error) {
-	id := fmt.Sprintf("r%v", atomic.AddInt32(&c.nextRequestNo, 1))
+	id := fmt.Sprintf("r%v", c.nextRequestNo.Add(1))
 	req.Id = id
 
 	ch := make(chan *fnpb.StateResponse, 1)

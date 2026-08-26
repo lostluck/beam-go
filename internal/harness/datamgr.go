@@ -207,7 +207,7 @@ type timerKey struct {
 // got is incremented only if we receive an IsLast signal for a given
 // instruction/transform pair.
 type elementsChan struct {
-	closed uint32 // Closed if != 0
+	closed atomic.Uint32 // Closed if != 0
 	instID instructionID
 
 	mu        sync.Mutex
@@ -225,7 +225,7 @@ func (ec *elementsChan) InstructionEnded() {
 
 // Closed indicates if all expected streams are complete
 func (ec *elementsChan) Closed() bool {
-	return atomic.LoadUint32(&ec.closed) != 0
+	return ec.closed.Load() != 0
 }
 
 // PTransformDone signals that a PTransform has no more data coming to it.
@@ -236,7 +236,7 @@ func (ec *elementsChan) PTransformDone() {
 	ec.got++
 	if ec.want > 0 && ec.want == ec.got {
 		if !ec.Closed() {
-			atomic.StoreUint32(&ec.closed, 1)
+			ec.closed.Store(1)
 			close(ec.ch)
 		}
 	}
@@ -306,7 +306,7 @@ func (c *DataChannel) makeChannel(fromSource bool, id clientID, additionalTransf
 			ec.want = (1 + int32(len(additionalTransforms)))
 		}
 		if _, ok := c.endedInstructions[id.instID]; ok || (ec.want > 0 && ec.want == ec.got) {
-			atomic.StoreUint32(&ec.closed, 1)
+			ec.closed.Store(1)
 			close(ec.ch)
 		}
 		return ec
@@ -326,7 +326,7 @@ func (c *DataChannel) makeChannel(fromSource bool, id clientID, additionalTransf
 	// So we provide a pre-completed reader, and do not cache it, as there's no further cleanup for it.
 	if _, ok := c.endedInstructions[id.instID]; ok {
 		// Since this is freshly created, we can set the close conditions immeadiately.
-		atomic.StoreUint32(&ec.closed, 1)
+		ec.closed.Store(1)
 		close(ec.ch)
 		return ec
 	}
@@ -358,7 +358,7 @@ func (c *DataChannel) read(ctx context.Context) {
 			// Any other approach is racy, and may cause one of the above panics.
 			for instID, ec := range c.channels {
 				if !ec.Closed() {
-					atomic.StoreUint32(&ec.closed, 1)
+					ec.closed.Store(1)
 					close(ec.ch)
 				}
 				delete(cache, instID)
@@ -445,7 +445,7 @@ func iterateElements[E dataEle](c *DataChannel, cache map[instructionID]*element
 		case ec.ch <- wrap(elm):
 		case <-ec.done: // In case of out of band cancels.
 			ec.mu.Lock()
-			atomic.StoreUint32(&ec.closed, 1)
+			ec.closed.Store(1)
 			close(ec.ch)
 			ec.mu.Unlock()
 		}

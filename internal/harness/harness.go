@@ -119,12 +119,12 @@ func Main(ctx context.Context, controlEndpoint string, opts Options, exec ExecFu
 	// is responsible for managing the network data. All it does is pull data from
 	// the stream, and hand off the message to a goroutine to actually be handled,
 	// so as to avoid blocking the underlying network channel.
-	var shutdown int32
+	var shutdown atomic.Int32
 	for {
 		req, err := controlStub.Recv()
 		if err != nil {
 			// An error means we can't send or receive anymore. Shut down.
-			atomic.AddInt32(&shutdown, 1)
+			shutdown.Add(1)
 			close(respc)
 			wg.Wait()
 			if err == io.EOF {
@@ -137,7 +137,7 @@ func Main(ctx context.Context, controlEndpoint string, opts Options, exec ExecFu
 		fn := func(ctx context.Context, req *fnpb.InstructionRequest) {
 			resp := handleInstruction(ctx, req, ctrl, logChan)
 
-			if resp != nil && atomic.LoadInt32(&shutdown) == 0 {
+			if resp != nil && shutdown.Load() == 0 {
 				respc <- resp
 			}
 		}

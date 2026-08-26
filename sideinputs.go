@@ -96,7 +96,7 @@ func validateSideInput[E any](emt PCol[E]) {
 // It allows access to the data of that Emitter's PCollection,
 func AsSideIter[E Element](emt PCol[E]) SideInputIter[E] {
 	validateSideInput(emt)
-	return SideInputIter[E]{sideInputCommon: sideInputCommon{valid: true, global: emt.globalIndex}}
+	return SideInputIter[E]{valid: true, global: emt.globalIndex}
 }
 
 // SideInputMap allows a side input to be accessed via multip-map key lookups.
@@ -176,5 +176,5 @@ func (si *SideInputMap[K, V]) Keys(ec ElmC) iter.Seq[K] {
 // AsSideMap initializes a MapSideInput from a valid upstream Emitter.
 func AsSideMap[K, V Element](emt PCol[KV[K, V]]) SideInputMap[K, V] {
 	validateSideInput(emt)
-	return SideInputMap[K, V]{sideInputCommon: sideInputCommon{valid: true, global: emt.globalIndex}}
+	return SideInputMap[K, V]{valid: true, global: emt.globalIndex}
 }
