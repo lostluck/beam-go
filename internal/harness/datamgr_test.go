@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 )
 
@@ -108,7 +109,8 @@ func (f *fakeDataClient) RecvMsg(msg any) error {
 		return err
 	}
 	emsg := msg.(*fnpb.Elements)
-	*emsg = *e
+	proto.Reset(emsg)
+	proto.Merge(emsg, e)
 	return nil
 }
 
@@ -131,7 +133,8 @@ func (f *fakeChanClient) RecvMsg(msg any) error {
 		return f.err
 	}
 	emsg := msg.(*fnpb.Elements)
-	*emsg = *e
+	proto.Reset(emsg)
+	proto.Merge(emsg, e)
 	return nil
 }
 
