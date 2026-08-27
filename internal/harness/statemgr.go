@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
@@ -498,7 +497,7 @@ func (c *StateChannel) terminateStreamOnError(err error) {
 
 func newStateChannel(ctx context.Context, url string) (*StateChannel, error) {
 	ctx, cancelFn := context.WithCancel(ctx)
-	cc, err := Dial(ctx, url, 15*time.Second)
+	cc, err := Dial(url)
 	if err != nil {
 		cancelFn()
 		return nil, errors.Wrapf(err, "failed to connect to state service %v", url)

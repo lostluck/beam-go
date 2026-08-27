@@ -9,7 +9,6 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pkg/errors"
 	"golang.org/x/sync/singleflight"
@@ -40,7 +39,7 @@ func Main(ctx context.Context, controlEndpoint string, opts Options, exec ExecFu
 
 	var logChan chan *fnpb.LogEntry
 	if opts.LoggingEndpoint != "" {
-		conn, err := Dial(ctx, opts.LoggingEndpoint, 60*time.Second)
+		conn, err := Dial(opts.LoggingEndpoint)
 		if err != nil {
 			return errors.Wrap(err, "failed to connect to logging endpoint")
 		}
@@ -80,7 +79,7 @@ func Main(ctx context.Context, controlEndpoint string, opts Options, exec ExecFu
 	}
 
 	// Connect to FnAPI control server. Receive and execute work.
-	conn, err := Dial(ctx, controlEndpoint, 60*time.Second)
+	conn, err := Dial(controlEndpoint)
 	if err != nil {
 		return errors.Wrap(err, "failed to connect to control endpoint")
 	}
@@ -159,16 +158,18 @@ func Main(ctx context.Context, controlEndpoint string, opts Options, exec ExecFu
 }
 
 // Dial is a convenience wrapper over grpc.NewClient. It can be overridden
-// to provide a customized dialing behavior.
+// to provide a customized client creation behavior.
 var Dial = DefaultDial
 
-// DefaultDial is a dialer that specifies an insecure connection.
-func DefaultDial(ctx context.Context, endpoint string, timeout time.Duration) (*grpc.ClientConn, error) {
-	cc, err := grpc.NewClient(endpoint,
+// DefaultDial is a client creator that specifies an insecure connection with default options.
+func DefaultDial(endpoint string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	defaultOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)))
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
+	}
+	cc, err := grpc.NewClient(endpoint, append(defaultOpts, opts...)...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to dial server at %v: %w", endpoint, err)
+		return nil, fmt.Errorf("failed to create client for server at %v: %w", endpoint, err)
 	}
 	return cc, nil
 }

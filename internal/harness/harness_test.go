@@ -312,8 +312,7 @@ func TestControl_GetOrLookupPlan(t *testing.T) {
 }
 
 func TestDefaultDial(t *testing.T) {
-	ctx := t.Context()
-	cc, err := DefaultDial(ctx, "localhost:12345", 50*time.Millisecond)
+	cc, err := DefaultDial("localhost:12345")
 	if err != nil {
 		t.Fatalf("unexpected error creating client: %v", err)
 	}

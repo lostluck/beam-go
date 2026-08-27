@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
@@ -244,7 +243,7 @@ func (ec *elementsChan) PTransformDone() {
 
 func newDataChannel(ctx context.Context, port Port) (*DataChannel, error) {
 	ctx, cancelFn := context.WithCancel(ctx)
-	cc, err := Dial(ctx, port.URL, 15*time.Second)
+	cc, err := Dial(port.URL)
 	if err != nil {
 		cancelFn()
 		return nil, errors.Wrapf(err, "failed to connect to data service at %v", port.URL)

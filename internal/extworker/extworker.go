@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"net"
 	"sync"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -179,7 +178,7 @@ func WriteWorkerID(ctx context.Context, id string) context.Context {
 
 // ProvisionInfo returns the runtime provisioning info for the worker.
 func ProvisionInfo(ctx context.Context, endpoint string) (*fnpb.ProvisionInfo, error) {
-	cc, err := harness.Dial(ctx, endpoint, 2*time.Minute)
+	cc, err := harness.Dial(endpoint)
 	if err != nil {
 		return nil, err
 	}

@@ -65,7 +65,7 @@ func writeWorkerID(ctx context.Context, id string) context.Context {
 }
 
 func Execute(ctx context.Context, p *pipepb.Pipeline, opts beamopts.Struct) (*Pipeline, error) {
-	cc, err := harness.Dial(ctx, opts.Endpoint, 1*time.Minute)
+	cc, err := harness.Dial(opts.Endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to job service: %w", err)
 	}
@@ -83,8 +83,7 @@ func Execute(ctx context.Context, p *pipepb.Pipeline, opts beamopts.Struct) (*Pi
 
 	// (2) Stage artifacts.
 	ctx = writeWorkerID(ctx, prepResp.GetPreparationId())
-	artcc, err := harness.Dial(ctx,
-		prepResp.GetArtifactStagingEndpoint().GetUrl(), 2*time.Minute)
+	artcc, err := harness.Dial(prepResp.GetArtifactStagingEndpoint().GetUrl())
 	if err != nil {
 		return nil, fmt.Errorf("connecting to artifact service: %w", err)
 	}
