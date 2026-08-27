@@ -23,7 +23,7 @@ import (
 
 // Flatten joins together multiple Emitters of the same type into a single Emitter for
 // downstream consumption.
-func Flatten[E Element](s *Scope, inputs ...PCol[E]) PCol[E] {
+func (s *Scope) Flatten[E Element](inputs ...PCol[E]) PCol[E] {
 	edgeID := s.g.curEdgeIndex()
 	nodeID := s.g.curNodeIndex()
 	if s.g.consumers == nil {

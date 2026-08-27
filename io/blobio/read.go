@@ -92,7 +92,7 @@ func ReadMatches(s *beam.Scope, col beam.PCol[BlobMetadata], opts ...ReadOptionF
 		opt(option)
 	}
 
-	return beam.ParDo(s, col, newReadFn(option), beam.Name("blobio.ReadMatches")).Output
+	return s.ParDo(col, newReadFn(option), beam.Name("blobio.ReadMatches")).Output
 }
 
 type readFn struct {

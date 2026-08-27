@@ -24,7 +24,7 @@ import (
 
 func TestRead(t *testing.T) {
 	_, err := beam.LaunchAndWait(context.Background(), func(s *beam.Scope) error {
-		beam.Impulse(s)
+		s.Impulse()
 		return nil
 	})
 	_ = err

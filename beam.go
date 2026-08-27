@@ -199,7 +199,7 @@ type Composite[O any] interface {
 
 // Expand attaches composite transforms onto the given pipeline scope, returning
 // the defined output type.
-func Expand[I Composite[O], O any](parent *Scope, name string, comp I) O {
+func (parent *Scope) Expand[I Composite[O], O any](name string, comp I) O {
 	s := &Scope{name: name, parent: parent, g: parent.g}
 	// We do all the expected connections here.
 	// Side inputs, are put on the side input at the DoFn creation time being passed in.

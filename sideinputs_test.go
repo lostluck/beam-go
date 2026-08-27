@@ -21,14 +21,14 @@ import (
 
 // convenience function to allow the discard type to be inferred.
 func namedDiscard[E Element](s *Scope, input PCol[E], name string) {
-	ParDo(s, input, &DiscardFn[E]{}, Name(name))
+	s.ParDo(input, &DiscardFn[E]{}, Name(name))
 }
 
 func TestSideInputIter(t *testing.T) {
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &SourceFn{Count: 10})
-		onlySide := ParDo(s, imp, &OnlySideIter[int]{Side: AsSideIter(src.Output)})
+		imp := s.Impulse()
+		src := s.ParDo(imp, &SourceFn{Count: 10})
+		onlySide := s.ParDo(imp, &OnlySideIter[int]{Side: AsSideIter(src.Output)})
 		namedDiscard(s, onlySide.Out, "sink")
 		return nil
 	}, pipeName(t))
@@ -42,10 +42,10 @@ func TestSideInputIter(t *testing.T) {
 
 func TestSideInputMap(t *testing.T) {
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &SourceFn{Count: 10})
-		kvsrc := ParDo(s, src.Output, &KeyMod[int]{Mod: 3})
-		onlySide := ParDo(s, imp, &OnlySideMap[int, int]{Side: AsSideMap(kvsrc.Output)})
+		imp := s.Impulse()
+		src := s.ParDo(imp, &SourceFn{Count: 10})
+		kvsrc := s.ParDo(src.Output, &KeyMod[int]{Mod: 3})
+		onlySide := s.ParDo(imp, &OnlySideMap[int, int]{Side: AsSideMap(kvsrc.Output)})
 		namedDiscard(s, onlySide.Out, "sink")
 		return nil
 	}, pipeName(t))

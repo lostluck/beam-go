@@ -515,9 +515,9 @@ func TestSeparation(t *testing.T) {
 		{
 			name: "ChannelSplit",
 			pipeline: func(s *Scope) error {
-				imp := Impulse(s)
-				src := ParDo(s, imp, &SourceFn{Count: 10})
-				sep := ParDo(s, Reshuffle(s, src.Output), &sepHarness[int]{
+				imp := s.Impulse()
+				src := s.ParDo(imp, &SourceFn{Count: 10})
+				sep := s.ParDo(s.Reshuffle(src.Output), &sepHarness[int]{
 					Base: sepHarnessBase[int]{
 						WatcherID:    ws.newWatcher(3),
 						Sleep:        10 * time.Millisecond,
@@ -525,15 +525,15 @@ func TestSeparation(t *testing.T) {
 						LocalService: ws.serviceAddress,
 					},
 				})
-				ParDo(s, sep.Output, &DiscardFn[int]{}, Name("sink"))
+				s.ParDo(sep.Output, &DiscardFn[int]{}, Name("sink"))
 				return nil
 			},
 		}, {
 			name: "SubElementSplit",
 			pipeline: func(s *Scope) error {
-				imp := Impulse(s)
-				src := ParDo(s, imp, &SourceFn{Count: 1}) // Single element since we split each into sub parts.
-				sep := ParDo(s, Reshuffle(s, src.Output), &sepHarnessSDF{
+				imp := s.Impulse()
+				src := s.ParDo(imp, &SourceFn{Count: 1}) // Single element since we split each into sub parts.
+				sep := s.ParDo(s.Reshuffle(src.Output), &sepHarnessSDF{
 					Base: sepHarnessBase[int]{
 						WatcherID:    ws.newWatcher(3),
 						Sleep:        10 * time.Millisecond,
@@ -541,7 +541,7 @@ func TestSeparation(t *testing.T) {
 						LocalService: ws.serviceAddress,
 					},
 				})
-				ParDo(s, sep.Output, &DiscardFn[int]{}, Name("sink"))
+				s.ParDo(sep.Output, &DiscardFn[int]{}, Name("sink"))
 				return nil
 			},
 		},

@@ -87,9 +87,9 @@ func pipeName(tb testing.TB) beamopts.Options {
 
 func TestSimple(t *testing.T) {
 	_, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &SourceFn{Count: 10})
-		ParDo(s, src.Output, &DiscardFn[int]{})
+		imp := s.Impulse()
+		src := s.ParDo(imp, &SourceFn{Count: 10})
+		s.ParDo(src.Output, &DiscardFn[int]{})
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -99,8 +99,8 @@ func TestSimple(t *testing.T) {
 
 func TestAutomaticDiscard(t *testing.T) {
 	_, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		ParDo(s, imp, &SourceFn{Count: 10})
+		imp := s.Impulse()
+		s.ParDo(imp, &SourceFn{Count: 10})
 		// drop the output.
 		return nil
 	}, pipeName(t))
@@ -111,9 +111,9 @@ func TestAutomaticDiscard(t *testing.T) {
 
 func TestSimpleNamed(t *testing.T) {
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &SourceFn{Count: 10})
-		ParDo(s, src.Output, &DiscardFn[int]{}, Name("pants"))
+		imp := s.Impulse()
+		src := s.ParDo(imp, &SourceFn{Count: 10})
+		s.ParDo(src.Output, &DiscardFn[int]{}, Name("pants"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -145,13 +145,13 @@ func BenchmarkPipe(b *testing.B) {
 			b.SetBytes(8 * int64(numDoFns+1))
 
 			pr, err := LaunchAndWait(b.Context(), func(s *Scope) error {
-				imp := Impulse(s)
-				src := ParDo(s, imp, &SourceFn{Count: b.N})
+				imp := s.Impulse()
+				src := s.ParDo(imp, &SourceFn{Count: b.N})
 				iden := src.Output
 				for range numDoFns {
-					iden = ParDo(s, iden, &IdenFn[int]{}).Output
+					iden = s.ParDo(iden, &IdenFn[int]{}).Output
 				}
-				ParDo(s, iden, &DiscardFn[int]{}, Name("sink"))
+				s.ParDo(iden, &DiscardFn[int]{}, Name("sink"))
 				return nil
 			}, pipeName(b))
 			if err != nil {
@@ -199,18 +199,18 @@ type WideNarrow struct {
 var _ Composite[struct{ Out PCol[int] }] = ((*WideNarrow)(nil))
 
 func (src *WideNarrow) Expand(s *Scope) (out struct{ Out PCol[int] }) {
-	partition := ParDo(s, src.In, &ModPartition[int]{Outputs: make([]PCol[int], src.Wide)})
-	out.Out = Flatten(s, partition.Outputs...)
+	partition := s.ParDo(src.In, &ModPartition[int]{Outputs: make([]PCol[int], src.Wide)})
+	out.Out = s.Flatten(partition.Outputs...)
 	return out
 }
 
 func TestPartitionFlatten(t *testing.T) {
 	count, mod := 10, 2
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &SourceFn{Count: count})
-		exp := Expand(s, "WideNarrow", &WideNarrow{Wide: mod, In: src.Output})
-		ParDo(s, exp.Out, &DiscardFn[int]{}, Name("sink"))
+		imp := s.Impulse()
+		src := s.ParDo(imp, &SourceFn{Count: count})
+		exp := s.Expand("WideNarrow", &WideNarrow{Wide: mod, In: src.Output})
+		s.ParDo(exp.Out, &DiscardFn[int]{}, Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -242,10 +242,10 @@ func BenchmarkPartitionPipe(b *testing.B) {
 			b.ReportAllocs()
 
 			pr, err := LaunchAndWait(b.Context(), func(s *Scope) error {
-				imp := Impulse(s)
-				src := ParDo(s, imp, &SourceFn{Count: b.N})
-				exp := Expand(s, "WideNarrow", &WideNarrow{Wide: numPartitions, In: src.Output})
-				ParDo(s, exp.Out, &DiscardFn[int]{}, Name("sink"))
+				imp := s.Impulse()
+				src := s.ParDo(imp, &SourceFn{Count: b.N})
+				exp := s.Expand("WideNarrow", &WideNarrow{Wide: numPartitions, In: src.Output})
+				s.ParDo(exp.Out, &DiscardFn[int]{}, Name("sink"))
 				return nil
 			}, pipeName(b))
 			if err != nil {
@@ -332,12 +332,12 @@ func (fn *GroupKeyModSum[V]) ProcessBundle(dfc *DFC[V]) error {
 func TestGBKSum(t *testing.T) {
 	mod := 3
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &SourceFn{Count: 10})
-		keyed := ParDo(s, src.Output, &KeyMod[int]{Mod: mod})
-		grouped := GBK(s, keyed.Output)
-		sums := ParDo(s, grouped, &SumByKey[int, int]{})
-		ParDo(s, sums.Output, &DiscardFn[KV[int, int]]{}, Name("sink"))
+		imp := s.Impulse()
+		src := s.ParDo(imp, &SourceFn{Count: 10})
+		keyed := s.ParDo(src.Output, &KeyMod[int]{Mod: mod})
+		grouped := s.GBK(keyed.Output)
+		sums := s.ParDo(grouped, &SumByKey[int, int]{})
+		s.ParDo(sums.Output, &DiscardFn[KV[int, int]]{}, Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -353,12 +353,12 @@ func BenchmarkGBKSum_int(b *testing.B) {
 		b.Run(fmt.Sprintf("mod_%v", mod), func(b *testing.B) {
 			discard := &DiscardFn[KV[int, int]]{}
 			pr, err := LaunchAndWait(b.Context(), func(s *Scope) error {
-				imp := Impulse(s)
-				src := ParDo(s, imp, &SourceFn{Count: b.N})
-				keyed := ParDo(s, src.Output, &KeyMod[int]{Mod: mod})
-				grouped := GBK(s, keyed.Output)
-				sums := ParDo(s, grouped, &SumByKey[int, int]{})
-				ParDo(s, sums.Output, discard, Name("sink"))
+				imp := s.Impulse()
+				src := s.ParDo(imp, &SourceFn{Count: b.N})
+				keyed := s.ParDo(src.Output, &KeyMod[int]{Mod: mod})
+				grouped := s.GBK(keyed.Output)
+				sums := s.ParDo(grouped, &SumByKey[int, int]{})
+				s.ParDo(sums.Output, discard, Name("sink"))
 				return nil
 			}, pipeName(b))
 			if err != nil {
@@ -376,10 +376,10 @@ func BenchmarkGBKSum_Lifted_int(b *testing.B) {
 	for _, mod := range []int{2, 3, 5, 10, 100, 1000, 10000} {
 		b.Run(fmt.Sprintf("mod_%v", mod), func(b *testing.B) {
 			pr, err := LaunchAndWait(b.Context(), func(s *Scope) error {
-				imp := Impulse(s)
-				src := ParDo(s, imp, &SourceFn{Count: b.N})
-				keyed := ParDo(s, src.Output, &GroupKeyModSum[int]{Mod: mod})
-				ParDo(s, keyed.Output, &DiscardFn[KV[int, int]]{}, Name("sink"))
+				imp := s.Impulse()
+				src := s.ParDo(imp, &SourceFn{Count: b.N})
+				keyed := s.ParDo(src.Output, &GroupKeyModSum[int]{Mod: mod})
+				s.ParDo(keyed.Output, &DiscardFn[KV[int, int]]{}, Name("sink"))
 				return nil
 			}, pipeName(b))
 			if err != nil {
@@ -396,10 +396,10 @@ func BenchmarkGBKSum_Lifted_int(b *testing.B) {
 func TestTwoSubGraphs(t *testing.T) {
 	count := 10
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp1, imp2 := Impulse(s), Impulse(s)
-		src1, src2 := ParDo(s, imp1, &SourceFn{Count: count + 1}), ParDo(s, imp2, &SourceFn{Count: count + 2})
-		ParDo(s, src1.Output, &DiscardFn[int]{}, Name("sink1"))
-		ParDo(s, src2.Output, &DiscardFn[int]{}, Name("sink2"))
+		imp1, imp2 := s.Impulse(), s.Impulse()
+		src1, src2 := s.ParDo(imp1, &SourceFn{Count: count + 1}), s.ParDo(imp2, &SourceFn{Count: count + 2})
+		s.ParDo(src1.Output, &DiscardFn[int]{}, Name("sink1"))
+		s.ParDo(src2.Output, &DiscardFn[int]{}, Name("sink2"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -422,10 +422,10 @@ func TestTwoSubGraphs(t *testing.T) {
 func TestMultiplexImpulse(t *testing.T) {
 	count := 10
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s) // As a Runner transform, impulses don't multiplex.
-		src1, src2 := ParDo(s, imp, &SourceFn{Count: count + 1}), ParDo(s, imp, &SourceFn{Count: count + 2})
-		ParDo(s, src1.Output, &DiscardFn[int]{}, Name("sink1"))
-		ParDo(s, src2.Output, &DiscardFn[int]{}, Name("sink2"))
+		imp := s.Impulse() // As a Runner transform, impulses don't multiplex.
+		src1, src2 := s.ParDo(imp, &SourceFn{Count: count + 1}), s.ParDo(imp, &SourceFn{Count: count + 2})
+		s.ParDo(src1.Output, &DiscardFn[int]{}, Name("sink1"))
+		s.ParDo(src2.Output, &DiscardFn[int]{}, Name("sink2"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -448,10 +448,10 @@ func TestMultiplexImpulse(t *testing.T) {
 func TestMultiplex(t *testing.T) {
 	count := 10
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &SourceFn{Count: count})
-		ParDo(s, src.Output, &DiscardFn[int]{}, Name("sink1"))
-		ParDo(s, src.Output, &DiscardFn[int]{}, Name("sink2"))
+		imp := s.Impulse()
+		src := s.ParDo(imp, &SourceFn{Count: count})
+		s.ParDo(src.Output, &DiscardFn[int]{}, Name("sink1"))
+		s.ParDo(src.Output, &DiscardFn[int]{}, Name("sink2"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -909,10 +909,10 @@ func (fn *sliceTransformFn) ProcessBundle(dfc *DFC[[]string]) error {
 
 func TestSlicePipeline(t *testing.T) {
 	_, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &sliceSourceFn{})
-		lengths := ParDo(s, src.Output, &sliceTransformFn{})
-		ParDo(s, lengths.Output, &DiscardFn[[]int]{})
+		imp := s.Impulse()
+		src := s.ParDo(imp, &sliceSourceFn{})
+		lengths := s.ParDo(src.Output, &sliceTransformFn{})
+		s.ParDo(lengths.Output, &DiscardFn[[]int]{})
 		return nil
 	}, pipeName(t))
 	if err != nil {

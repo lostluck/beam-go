@@ -63,15 +63,15 @@ func TestSyntheticStep(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			p, err := beam.LaunchAndWait(ctx, func(s *beam.Scope) error {
-				in := beam.Create(s, tc.inputElements...)
+				in := s.Create(tc.inputElements...)
 				step := &syntheticStep[string]{
 					PerElementDelay:             1 * time.Millisecond,
 					PerBundleDelay:              5 * time.Millisecond,
 					OutputRecordsPerInputRecord: tc.recordsPerIn,
 					OutputFilterRatio:           tc.filterRatio,
 				}
-				out := beam.ParDo(s, in, step, beam.Name("synth"))
-				beam.ParDo(s, out.Output, &countFn[string]{}, beam.Name("counter"))
+				out := s.ParDo(in, step, beam.Name("synth"))
+				s.ParDo(out.Output, &countFn[string]{}, beam.Name("counter"))
 				return nil
 			})
 			if err != nil {
@@ -182,7 +182,7 @@ func (synthSDFRestrictionFactory) Produce(e string) beam.OffsetRange {
 func TestSyntheticSDFStep(t *testing.T) {
 	ctx := t.Context()
 	p, err := beam.LaunchAndWait(ctx, func(s *beam.Scope) error {
-		in := beam.Create(s, "item")
+		in := s.Create("item")
 		step := &syntheticSDFStep[synthSDFRestrictionFactory, *beam.ORTracker, string]{
 			PerElementDelay: 1 * time.Millisecond,
 			PerBundleDelay:  5 * time.Millisecond,
@@ -190,8 +190,8 @@ func TestSyntheticSDFStep(t *testing.T) {
 				return &beam.ORTracker{Rest: r}
 			},
 		}
-		out := beam.ParDo(s, in, step, beam.Name("synth_sdf"))
-		beam.ParDo(s, out.Output, &countFn[string]{}, beam.Name("counter"))
+		out := s.ParDo(in, step, beam.Name("synth_sdf"))
+		s.ParDo(out.Output, &countFn[string]{}, beam.Name("counter"))
 		return nil
 	})
 	if err != nil {

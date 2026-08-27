@@ -38,13 +38,13 @@ func (fn *collectCountsFn) ProcessBundle(dfc *beam.DFC[beam.KV[string, int]]) er
 func TestCountWords(t *testing.T) {
 	ctx := t.Context()
 	p, err := beam.LaunchAndWait(ctx, func(s *beam.Scope) error {
-		lines := beam.Create(s,
+		lines := s.Create(
 			"To be, or not to be: that is the question:",
 			"",
 			"Whether 'tis nobler in the mind to suffer",
 		)
 		wordCounts := CountWords(s, lines, 5)
-		beam.ParDo(s, wordCounts, &collectCountsFn{}, beam.Name("collector"))
+		s.ParDo(wordCounts, &collectCountsFn{}, beam.Name("collector"))
 		return nil
 	})
 	if err != nil {
@@ -117,12 +117,12 @@ func TestWordcountPipeline(t *testing.T) {
 	}
 
 	pipelineFn := func(s *beam.Scope) error {
-		lines := beam.Create(s, "hello world hello", "foo bar baz")
+		lines := s.Create("hello world hello", "foo bar baz")
 		wordcount := CountWords(s, lines, 5)
-		formatted := beam.Map(s, wordcount, func(count beam.KV[string, int]) string {
+		formatted := s.Map(wordcount, func(count beam.KV[string, int]) string {
 			return strings.ToUpper(count.Key)
 		})
-		beam.ParDo(s, formatted, &verifyStringFn{})
+		s.ParDo(formatted, &verifyStringFn{})
 		return nil
 	}
 

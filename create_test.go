@@ -26,8 +26,8 @@ import (
 func TestCreate(t *testing.T) {
 	// TODO, more types, actual validation of the types.
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		count := Create(s, 1, 2, 3, 4, 5)
-		ParDo(s, count, &DiscardFn[int]{}, Name("discarded"))
+		count := s.Create(1, 2, 3, 4, 5)
+		s.ParDo(count, &DiscardFn[int]{}, Name("discarded"))
 		return nil
 	}, pipeName(t))
 	if err != nil {

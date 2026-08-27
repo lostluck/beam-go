@@ -110,7 +110,7 @@ func TestImmediate(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				beam.ParDo(s, lines, &countLinesFn{}, beam.Name("c1"))
+				s.ParDo(lines, &countLinesFn{}, beam.Name("c1"))
 				return nil
 			})
 			if err != nil {
@@ -199,20 +199,20 @@ func TestReadWritePipeline(t *testing.T) {
 	p, err := beam.LaunchAndWait(ctx, func(s *beam.Scope) error {
 		// Test Read
 		lines1 := Read(s, bucketURL, "file1.txt", ReadUncompressed())
-		beam.ParDo(s, lines1, &countLinesFn{}, beam.Name("r1"))
+		s.ParDo(lines1, &countLinesFn{}, beam.Name("r1"))
 
 		// Test ReadWithFilename
 		linesKV := ReadWithFilename(s, bucketURL, "file1.txt")
-		beam.ParDo(s, linesKV, &countKVLinesFn{}, beam.Name("rKV"))
+		s.ParDo(linesKV, &countKVLinesFn{}, beam.Name("rKV"))
 
 		// Test ReadAll
-		patterns := beam.Create(s, beam.Pair(bucketURL, "sub/*.txt"))
+		patterns := s.Create(beam.Pair(bucketURL, "sub/*.txt"))
 		linesAll := ReadAll(s, patterns, ReadAutoCompression())
-		beam.ParDo(s, linesAll, &countLinesFn{}, beam.Name("rAll"))
+		s.ParDo(linesAll, &countLinesFn{}, beam.Name("rAll"))
 
 		// Test WriteSingle
 		written := WriteSingle(s, bucketURL, "output.txt", lines1)
-		beam.ParDo(s, written, &countLinesFn{}, beam.Name("w1"))
+		s.ParDo(written, &countLinesFn{}, beam.Name("w1"))
 
 		return nil
 	})

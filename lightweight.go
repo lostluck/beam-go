@@ -41,12 +41,12 @@ func (fn *mapper[I, O]) lightweightInit(metadata map[string]any) {
 	fn.fn = metadata[fn.Key].(func(I) O)
 }
 
-func Map[I, O Element](s *Scope, input PCol[I], lambda func(I) O, opts ...beamopts.Options) PCol[O] {
+func (s *Scope) Map[I, O Element](input PCol[I], lambda func(I) O, opts ...beamopts.Options) PCol[O] {
 	ei := s.g.curEdgeIndex()
 	// Store the transform in the metadata
 	// with an index specific key.
 	key := fmt.Sprintf("map%03d", ei)
-	out := ParDo(s, input, &mapper[I, O]{fn: lambda, Key: key}, opts...)
+	out := s.ParDo(input, &mapper[I, O]{fn: lambda, Key: key}, opts...)
 
 	if s.g.edgeMeta == nil {
 		s.g.edgeMeta = make(map[string]any)

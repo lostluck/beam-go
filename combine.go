@@ -102,7 +102,7 @@ func FullCombine[A, I, O Element, C FullCombiner[A, I, O]](c C) Combiner[A, I, O
 
 // CombinePerKey uses a [Combiner] to transform and combine elements with the
 // same key, per window.
-func CombinePerKey[K Keys, A, I, O Element, AM AccumulatorMerger[A]](s *Scope, input PCol[KV[K, I]], comb Combiner[A, I, O, AM]) PCol[KV[K, O]] {
+func (s *Scope) CombinePerKey[K Keys, A, I, O Element, AM AccumulatorMerger[A]](input PCol[KV[K, I]], comb Combiner[A, I, O, AM]) PCol[KV[K, O]] {
 	edgeID := s.g.curEdgeIndex()
 	nodeID := s.g.curNodeIndex()
 	s.g.edges = append(s.g.edges, &edgeCombine{index: edgeID, input: input.globalIndex, output: nodeID, comb: &hiddenKeyedCombiner[K, A, I, O, AM]{Merger: comb.am}})

@@ -30,8 +30,8 @@ func TestStatefulParDo_Invalid(t *testing.T) {
 	}()
 
 	_, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, beam.KV[int, int]{1, 2})
-		beam.StatefulParDo(s, input, &countFn[beam.KV[int, int]]{})
+		input := s.Create( beam.KV[int, int]{1, 2})
+		s.StatefulParDo( input, &countFn[beam.KV[int, int]]{})
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -67,9 +67,9 @@ func TestStatefulParDo_BagWrites(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 0}, {1, 1}, {1, 3}, {1, 6}, {1, 4}, {2, 0}, {2, 1}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
-		bagged := beam.StatefulParDo(s, input, &StateBagDoFn{})
-		beam.ParDo(s, bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
+		bagged := s.StatefulParDo( input, &StateBagDoFn{})
+		s.ParDo( bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -111,9 +111,9 @@ func TestStatefulParDo_BlindBagWrites(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 1}, {1, 3}, {1, 6}, {1, 4}, {1, 9}, {2, 1}, {2, 4}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
-		bagged := beam.StatefulParDo(s, input, &StateBagDoFn_Blind{})
-		beam.ParDo(s, bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
+		bagged := s.StatefulParDo( input, &StateBagDoFn_Blind{})
+		s.ParDo( bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -154,9 +154,9 @@ func TestStatefulParDo_Value(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 1}, {1, 3}, {1, 6}, {1, 10}, {1, 5}, {2, 1}, {2, 4}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
-		bagged := beam.StatefulParDo(s, input, &StateValueDoFn{})
-		beam.ParDo(s, bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
+		bagged := s.StatefulParDo( input, &StateValueDoFn{})
+		s.ParDo( bagged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -201,9 +201,9 @@ func TestStatefulParDo_Map(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 1}, {1, 3}, {1, 6}, {1, 10}, {1, 5}, {2, 1}, {2, 4}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
-		mapped := beam.StatefulParDo(s, input, &StateMapDoFn{})
-		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
+		mapped := s.StatefulParDo( input, &StateMapDoFn{})
+		s.ParDo( mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -242,9 +242,9 @@ func TestStatefulParDo_MapRemove(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 2}, {1, 5}, {1, 3}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 2}, {1, 3}, {1, 3}}...)
-		mapped := beam.StatefulParDo(s, input, &StateMapRemoveDoFn{})
-		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 2}, {1, 3}, {1, 3}}...)
+		mapped := s.StatefulParDo( input, &StateMapRemoveDoFn{})
+		s.ParDo( mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -278,9 +278,9 @@ func TestStatefulParDo_MapAll(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 10}, {1, 30}, {2, 5}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 5}}...)
-		mapped := beam.StatefulParDo(s, input, &StateMapAllDoFn{})
-		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 5}}...)
+		mapped := s.StatefulParDo( input, &StateMapAllDoFn{})
+		s.ParDo( mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -321,9 +321,9 @@ func TestStatefulParDo_Set(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 5}, {1, 15}, {1, 5}, {2, 10}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 10}, {2, 10}}...)
-		setted := beam.StatefulParDo(s, input, &StateSetDoFn{})
-		beam.ParDo(s, setted.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 10}, {2, 10}}...)
+		setted := s.StatefulParDo( input, &StateSetDoFn{})
+		s.ParDo( setted.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -359,9 +359,9 @@ func TestStatefulParDo_SetClear(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 5}, {1, 15}, {1, 20}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 20}}...)
-		setted := beam.StatefulParDo(s, input, &StateSetClearDoFn{})
-		beam.ParDo(s, setted.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 20}}...)
+		setted := s.StatefulParDo( input, &StateSetClearDoFn{})
+		s.ParDo( setted.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -398,9 +398,9 @@ func TestStatefulParDo_MultiState(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 10}, {1, 30}, {2, 5}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 5}}...)
-		st := beam.StatefulParDo(s, input, &MultiStateDoFn{})
-		beam.ParDo(s, st.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 5}}...)
+		st := s.StatefulParDo( input, &MultiStateDoFn{})
+		s.ParDo( st.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -441,8 +441,8 @@ func TestStatefulParDo_SDFPanic(t *testing.T) {
 	}()
 
 	_, _ = beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, beam.KV[int, int]{1, 2})
-		beam.StatefulParDo(s, input, &SDFStatefulFn{})
+		input := s.Create( beam.KV[int, int]{1, 2})
+		s.StatefulParDo( input, &SDFStatefulFn{})
 		return nil
 	}, pipeName(t))
 }
@@ -487,9 +487,9 @@ func TestStatefulParDo_ValueCacheInvariants(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 42}, {2, 42}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {2, 1}}...)
-		st := beam.StatefulParDo(s, input, &StateValueCacheDoFn{})
-		beam.ParDo(s, st.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 1}, {2, 1}}...)
+		st := s.StatefulParDo( input, &StateValueCacheDoFn{})
+		s.ParDo( st.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -528,9 +528,9 @@ func TestStatefulParDo_MultiMap(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 1}, {1, 3}, {1, 6}, {1, 10}, {1, 5}, {2, 1}, {2, 4}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
-		mapped := beam.StatefulParDo(s, input, &StateMultiMapDoFn{})
-		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {1, 4}, {1, 5}, {2, 3}}...)
+		mapped := s.StatefulParDo( input, &StateMultiMapDoFn{})
+		s.ParDo( mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -574,9 +574,9 @@ func TestStatefulParDo_MultiMapAllAndKeys(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 11}, {1, 32}, {2, 6}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 5}}...)
-		mapped := beam.StatefulParDo(s, input, &StateMultiMapAllDoFn{})
-		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 5}}...)
+		mapped := s.StatefulParDo( input, &StateMultiMapAllDoFn{})
+		s.ParDo( mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -614,9 +614,9 @@ func TestStatefulParDo_MultiMapClear(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 5}, {1, 15}, {1, 20}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 20}}...)
-		mapped := beam.StatefulParDo(s, input, &StateMultiMapClearDoFn{})
-		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 20}}...)
+		mapped := s.StatefulParDo( input, &StateMultiMapClearDoFn{})
+		s.ParDo( mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -675,9 +675,9 @@ func TestStatefulParDo_OrderedList(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 3}, {1, 4}, {1, 6}, {2, 5}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 3}, {1, 1}, {1, 2}, {2, 5}}...)
-		ordered := beam.StatefulParDo(s, input, &StateOrderedListDoFn{})
-		beam.ParDo(s, ordered.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 3}, {1, 1}, {1, 2}, {2, 5}}...)
+		ordered := s.StatefulParDo( input, &StateOrderedListDoFn{})
+		s.ParDo( ordered.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -722,9 +722,9 @@ func TestStatefulParDo_OrderedListRange(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 0}, {1, 2}, {1, 5}, {1, 5}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {1, 4}}...)
-		ranged := beam.StatefulParDo(s, input, &StateOrderedListRangeDoFn{})
-		beam.ParDo(s, ranged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 1}, {1, 2}, {1, 3}, {1, 4}}...)
+		ranged := s.StatefulParDo( input, &StateOrderedListRangeDoFn{})
+		s.ParDo( ranged.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -761,9 +761,9 @@ func TestStatefulParDo_OrderedListClear(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 5}, {1, 15}, {1, 20}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 20}}...)
-		cleared := beam.StatefulParDo(s, input, &StateOrderedListClearDoFn{})
-		beam.ParDo(s, cleared.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 5}, {1, 10}, {1, 20}}...)
+		cleared := s.StatefulParDo( input, &StateOrderedListClearDoFn{})
+		s.ParDo( cleared.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -798,9 +798,9 @@ func TestStatefulParDo_MapValues(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 30}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 30}}...)
-		mapped := beam.StatefulParDo(s, input, &StateMapValuesDoFn{})
-		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 30}}...)
+		mapped := s.StatefulParDo( input, &StateMapValuesDoFn{})
+		s.ParDo( mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -835,9 +835,9 @@ func TestStatefulParDo_MultiMapValues(t *testing.T) {
 	expected := []beam.KV[int, int]{{1, 10}, {1, 30}, {2, 5}}
 
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		input := beam.Create(s, []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 5}}...)
-		mapped := beam.StatefulParDo(s, input, &StateMultiMapValuesDoFn{})
-		beam.ParDo(s, mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
+		input := s.Create( []beam.KV[int, int]{{1, 10}, {1, 20}, {2, 5}}...)
+		mapped := s.StatefulParDo( input, &StateMultiMapValuesDoFn{})
+		s.ParDo( mapped.Output, &countFn[beam.KV[int, int]]{Countable: expected}, beam.Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {

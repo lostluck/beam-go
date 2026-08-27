@@ -24,7 +24,7 @@ import (
 //
 // The element is a single byte slice in the global window, with an event timestamp
 // at the start of the global window.
-func Impulse(s *Scope) PCol[[]byte] {
+func (s *Scope) Impulse() PCol[[]byte] {
 	edgeID := s.g.curEdgeIndex()
 	nodeID := s.g.curNodeIndex()
 	s.g.edges = append(s.g.edges, &edgeImpulse{index: edgeID, output: nodeID})

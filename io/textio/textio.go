@@ -68,7 +68,7 @@ func Read(s *beam.Scope, bucket, glob string, opts ...ReadOptionFn) beam.PCol[st
 	// s = s.Scope("textio.Read")
 
 	// filesystem.ValidateScheme(glob)
-	return read(s, &readFn{}, beam.Create(s, beam.Pair(bucket, glob)), opts...).Lines
+	return read(s, &readFn{}, s.Create(beam.Pair(bucket, glob)), opts...).Lines
 }
 
 // ReadAll expands and reads the filename given as globs by the incoming
@@ -89,7 +89,7 @@ func ReadWithFilename(s *beam.Scope, bucket, glob string, opts ...ReadOptionFn) 
 	//s = s.Scope("textio.ReadWithFilename")
 
 	// filesystem.ValidateScheme(glob)
-	return read(s, &readWNameFn{}, beam.Create(s, beam.Pair(bucket, glob)), opts...).Lines
+	return read(s, &readWNameFn{}, s.Create(beam.Pair(bucket, glob)), opts...).Lines
 }
 
 // read takes a PCollection of globs, finds all matching files, and applies
@@ -102,7 +102,7 @@ func read[T beam.Transform[blobio.ReadableBlob]](s *beam.Scope, dofn T, col beam
 
 	matches := blobio.MatchAll(s, col, blobio.MatchEmptyAllow())
 	files := blobio.ReadMatches(s, matches, option.FileOpts...)
-	return beam.ParDo(s, files, dofn)
+	return s.ParDo(files, dofn)
 }
 
 // consumer is an interface for consuming a string value.
@@ -281,11 +281,11 @@ func WriteSingle(s *beam.Scope, bucket, filename string, col beam.PCol[string]) 
 	// TODO: enable urlmux override.
 	// blob.DefaultURLMux().ValidBucketScheme(bucket)
 
-	pre := beam.Map(s, col, func(line string) beam.KV[beam.KV[string, string], string] {
+	pre := s.Map(col, func(line string) beam.KV[beam.KV[string, string], string] {
 		return beam.Pair(beam.Pair(bucket, filename), line)
 	})
-	post := beam.GBK(s, pre)
-	return beam.ParDo(s, post, &writeFilesFn{}).WrittenPaths
+	post := s.GBK(pre)
+	return s.ParDo(post, &writeFilesFn{}).WrittenPaths
 }
 
 type writeFilesFn struct {
@@ -352,5 +352,5 @@ func Immediate(s *beam.Scope, filename string) (beam.PCol[string], error) {
 	if err := scanner.Err(); err != nil {
 		return beam.PCol[string]{}, err
 	}
-	return beam.Create(s, data...), nil
+	return s.Create(data...), nil
 }

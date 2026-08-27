@@ -31,7 +31,7 @@ func TestOptions_Endpoint(t *testing.T) {
 	defer h.Terminate()
 
 	if _, err := LaunchAndWait(ctx, func(s *Scope) error {
-		Impulse(s)
+		s.Impulse()
 		return nil
 	}, Endpoint(h.Addr())); err != nil {
 		t.Errorf("pipeline failed to launch: %v", err)

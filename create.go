@@ -43,10 +43,9 @@ func newCreateFn[E Element](values ...E) *createFn[E] {
 //
 // Values in create are serialzied as part of the Beam Pipeline graph, so it is
 // not suitable for large elements, or large numbers of elements.
-func Create[E Element](s *Scope, values ...E) PCol[E] {
-	return ParDo(
-		s,
-		Impulse(s),
+func (s *Scope) Create[E Element](values ...E) PCol[E] {
+	return s.ParDo(
+		s.Impulse(),
 		newCreateFn(values...),
 		Name("beam.Create"),
 	).Out

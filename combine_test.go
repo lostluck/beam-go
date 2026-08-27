@@ -24,11 +24,11 @@ import (
 func TestCombineKeyedSum(t *testing.T) {
 	// We need to have all the keys, so 1.
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &SourceFn{Count: 10})
-		keyedSrc := ParDo(s, src.Output, &AddFixedKeyFn[int]{})
-		sums := CombinePerKey(s, keyedSrc.Output, SimpleMerge(SumFn[int]{}))
-		ParDo(s, sums, &DiscardFn[KV[int, int]]{}, Name("sink"))
+		imp := s.Impulse()
+		src := s.ParDo(imp, &SourceFn{Count: 10})
+		keyedSrc := s.ParDo(src.Output, &AddFixedKeyFn[int]{})
+		sums := s.CombinePerKey(keyedSrc.Output, SimpleMerge(SumFn[int]{}))
+		s.ParDo(sums, &DiscardFn[KV[int, int]]{}, Name("sink"))
 		return nil
 	}, pipeName(t))
 	if err != nil {
@@ -42,10 +42,10 @@ func TestCombineKeyedSum(t *testing.T) {
 func TestCombineKeyedMean(t *testing.T) {
 	// We need to have all the keys, so 1.
 	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
-		imp := Impulse(s)
-		src := ParDo(s, imp, &SourceFn{Count: 10})
-		keyedSrc := ParDo(s, src.Output, &AddFixedKeyFn[int]{})
-		means := CombinePerKey(s, keyedSrc.Output, FullCombine(MeanFn[int]{}))
+		imp := s.Impulse()
+		src := s.ParDo(imp, &SourceFn{Count: 10})
+		keyedSrc := s.ParDo(src.Output, &AddFixedKeyFn[int]{})
+		means := s.CombinePerKey(keyedSrc.Output, FullCombine(MeanFn[int]{}))
 		namedDiscard(s, means, "sink")
 		return nil
 	}, pipeName(t))

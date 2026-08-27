@@ -29,7 +29,7 @@ type Keys interface {
 }
 
 // GBK produces an output PCollection of values grouped by key.
-func GBK[K Keys, V Element](s *Scope, input PCol[KV[K, V]], opts ...Options) PCol[KV[K, Iter[V]]] {
+func (s *Scope) GBK[K Keys, V Element](input PCol[KV[K, V]], opts ...Options) PCol[KV[K, Iter[V]]] {
 	if s.g.consumers == nil {
 		s.g.consumers = map[nodeIndex][]edgeIndex{}
 	}
@@ -83,7 +83,7 @@ var _ protoDescMultiEdge = (*edgeGBK[int, int])(nil)
 
 // Reshuffle inserts a fusion break in the pipeline, preventing a
 // producer transform from being fused with the consuming transform.
-func Reshuffle[E Element](s *Scope, input PCol[E], opts ...Options) PCol[E] {
+func (s *Scope) Reshuffle[E Element](input PCol[E], opts ...Options) PCol[E] {
 	if s.g.consumers == nil {
 		s.g.consumers = map[nodeIndex][]edgeIndex{}
 	}

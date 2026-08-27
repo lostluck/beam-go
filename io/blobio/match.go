@@ -82,7 +82,7 @@ func (mf *matchFiles) Expand(s *beam.Scope) beam.PCol[BlobMetadata] {
 		opt(option)
 	}
 
-	return beam.ParDo(s, mf.Input, newMatchFn(option)).Blobs
+	return s.ParDo(mf.Input, newMatchFn(option)).Blobs
 }
 
 // MatchFiles finds all files matching the glob pattern and returns a PCollection<FileMetadata> of
@@ -94,8 +94,8 @@ func MatchFiles(s *beam.Scope, bucket, glob string, opts ...MatchOptionFn) beam.
 	// TODO allow overriding URLMux here.
 	blob.DefaultURLMux().ValidBucketScheme(scheme)
 
-	return beam.Expand(s, "blobio.MatchFiles", &matchFiles{
-		Input:   beam.Create(s, beam.Pair(bucket, glob)),
+	return s.Expand("blobio.MatchFiles", &matchFiles{
+		Input:   s.Create(beam.Pair(bucket, glob)),
 		Options: opts,
 	})
 }
@@ -105,7 +105,7 @@ func MatchFiles(s *beam.Scope, bucket, glob string, opts ...MatchOptionFn) beam.
 // MatchOptionFn that can be used to configure the treatment of empty matches. By default, empty
 // matches are allowed if the pattern contains a wildcard.
 func MatchAll(s *beam.Scope, col beam.PCol[beam.KV[string, string]], opts ...MatchOptionFn) beam.PCol[BlobMetadata] {
-	return beam.Expand(s, "blobio.MatchAll", &matchFiles{
+	return s.Expand("blobio.MatchAll", &matchFiles{
 		Input:   col,
 		Options: opts,
 	})

@@ -41,10 +41,10 @@ func (fn *countFn[E]) ProcessBundle(dfc *beam.DFC[E]) error {
 
 func TestLightweight(t *testing.T) {
 	p, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		imp := beam.Impulse(s)
+		imp := s.Impulse()
 		wantWord := "squeamish_ossiphrage"
-		out1 := beam.Map(s, imp, func([]byte) string { return wantWord })
-		beam.ParDo(s, out1, &countFn[string]{
+		out1 := s.Map(imp, func([]byte) string { return wantWord })
+		s.ParDo(out1, &countFn[string]{
 			Countable: []string{wantWord},
 		}, beam.Name("count"))
 		return nil

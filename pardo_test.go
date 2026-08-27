@@ -27,7 +27,7 @@ import (
 
 // convenience function to allow the discard type to be inferred.
 func namedDiscard[E beam.Element](s *beam.Scope, input beam.PCol[E], name string) {
-	beam.ParDo(s, input, &beam.DiscardFn[E]{}, beam.Name(name))
+	s.ParDo(input, &beam.DiscardFn[E]{}, beam.Name(name))
 }
 
 func pipeName(tb testing.TB) beamopts.Options {
@@ -224,9 +224,9 @@ func (SimpleFac) Produce(e int) beam.OffsetRange {
 
 func TestSplittableDoFn(t *testing.T) {
 	pr, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
-		imp := beam.Impulse(s)
-		src := beam.ParDo(s, imp, &beam.SourceFn{Count: 10})
-		keyedSrc := beam.ParDo(s, src.Output, &countingSplitterFn{})
+		imp := s.Impulse()
+		src := s.ParDo(imp, &beam.SourceFn{Count: 10})
+		keyedSrc := s.ParDo(src.Output, &countingSplitterFn{})
 		namedDiscard(s, keyedSrc.Output, "sink")
 		return nil
 	}, pipeName(t))

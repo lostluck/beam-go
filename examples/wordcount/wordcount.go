@@ -42,7 +42,7 @@ func wordcountPipeline() func(s *beam.Scope) error {
 		lines := textio.Read(s, "gs://apache-beam-samples/", "shakespeare/kinglear.txt")
 		wordcount := CountWords(s, lines, *smallWordLength)
 
-		formatted := beam.Map(s, wordcount, func(count beam.KV[string, int]) string {
+		formatted := s.Map(wordcount, func(count beam.KV[string, int]) string {
 			return fmt.Sprintf("%s: %d", count.Key, count.Value)
 		})
 		textio.WriteSingle(s, "file:///tmp/wordcount/", "counts.txt", formatted)
@@ -89,15 +89,15 @@ type countWords struct {
 }
 
 func (cw *countWords) Expand(s *beam.Scope) beam.PCol[beam.KV[string, int]] {
-	extract := beam.ParDo(s, cw.Lines, &extractFn{
+	extract := s.ParDo(cw.Lines, &extractFn{
 		SmallWordLength: cw.SmallWordLength,
 	}, beam.Name("extract"))
 
-	paired := beam.Map(s, extract.Words, func(word string) beam.KV[string, int] {
+	paired := s.Map(extract.Words, func(word string) beam.KV[string, int] {
 		return beam.Pair(word, 1)
 	})
 
-	return beam.CombinePerKey(s, paired,
+	return s.CombinePerKey(paired,
 		beam.SimpleMerge(sum[int]{}))
 }
 
@@ -108,7 +108,7 @@ func (sum[A]) MergeAccumulators(a A, b A) A {
 }
 
 func CountWords(s *beam.Scope, lines beam.PCol[string], smallWordLength int) beam.PCol[beam.KV[string, int]] {
-	return beam.Expand(s, "CountWords", &countWords{
+	return s.Expand("CountWords", &countWords{
 		Lines:           lines,
 		SmallWordLength: smallWordLength,
 	})

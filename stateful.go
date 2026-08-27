@@ -25,7 +25,7 @@ import (
 //
 // This function panics if provided a DoFn without state or timers, as it is a
 // programming error.
-func StatefulParDo[DF Transform[KV[K, V]], K Keys, V Element](s *Scope, input PCol[KV[K, V]], dofn DF, opts ...Options) DF {
+func (s *Scope) StatefulParDo[DF Transform[KV[K, V]], K Keys, V Element](input PCol[KV[K, V]], dofn DF, opts ...Options) DF {
 	fields := extractStateful(dofn)
 	if len(fields) == 0 {
 		panic(fmt.Sprintf("Non-stateful DoFn %T passed to StatefulParDo. Must have a State or Timer typed field", dofn))

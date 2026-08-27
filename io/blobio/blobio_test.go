@@ -305,13 +305,13 @@ func TestMatchAndReadPipeline(t *testing.T) {
 		matches := MatchFiles(s, bucketURL, "*.txt", MatchEmptyAllow())
 		// Test ReadMatches
 		blobs := ReadMatches(s, matches, ReadAutoCompression(), ReadDirectorySkip())
-		beam.ParDo(s, blobs, &verifyBlobFn{}, beam.Name("v1"))
+		s.ParDo(blobs, &verifyBlobFn{}, beam.Name("v1"))
 
 		// Test MatchAll
-		patterns := beam.Create(s, beam.Pair(bucketURL, "sub/*.txt"), beam.Pair(bucketURL, "missing/*.txt"))
+		patterns := s.Create(beam.Pair(bucketURL, "sub/*.txt"), beam.Pair(bucketURL, "missing/*.txt"))
 		allMatches := MatchAll(s, patterns, MatchEmptyAllowIfWildcard())
 		allBlobs := ReadMatches(s, allMatches, ReadUncompressed())
-		beam.ParDo(s, allBlobs, &verifyBlobFn{}, beam.Name("v2"))
+		s.ParDo(allBlobs, &verifyBlobFn{}, beam.Name("v2"))
 		return nil
 	})
 	if err != nil {
