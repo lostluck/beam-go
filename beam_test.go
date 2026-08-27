@@ -16,7 +16,6 @@
 package beam
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -87,7 +86,7 @@ func pipeName(tb testing.TB) beamopts.Options {
 }
 
 func TestSimple(t *testing.T) {
-	_, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	_, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: 10})
 		ParDo(s, src.Output, &DiscardFn[int]{})
@@ -99,7 +98,7 @@ func TestSimple(t *testing.T) {
 }
 
 func TestAutomaticDiscard(t *testing.T) {
-	_, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	_, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		ParDo(s, imp, &SourceFn{Count: 10})
 		// drop the output.
@@ -111,7 +110,7 @@ func TestAutomaticDiscard(t *testing.T) {
 }
 
 func TestSimpleNamed(t *testing.T) {
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: 10})
 		ParDo(s, src.Output, &DiscardFn[int]{}, Name("pants"))
@@ -145,7 +144,7 @@ func BenchmarkPipe(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(8 * int64(numDoFns+1))
 
-			pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+			pr, err := LaunchAndWait(b.Context(), func(s *Scope) error {
 				imp := Impulse(s)
 				src := ParDo(s, imp, &SourceFn{Count: b.N})
 				iden := src.Output
@@ -207,7 +206,7 @@ func (src *WideNarrow) Expand(s *Scope) (out struct{ Out PCol[int] }) {
 
 func TestPartitionFlatten(t *testing.T) {
 	count, mod := 10, 2
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: count})
 		exp := Expand(s, "WideNarrow", &WideNarrow{Wide: mod, In: src.Output})
@@ -242,7 +241,7 @@ func BenchmarkPartitionPipe(b *testing.B) {
 		return func(b *testing.B) {
 			b.ReportAllocs()
 
-			pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+			pr, err := LaunchAndWait(b.Context(), func(s *Scope) error {
 				imp := Impulse(s)
 				src := ParDo(s, imp, &SourceFn{Count: b.N})
 				exp := Expand(s, "WideNarrow", &WideNarrow{Wide: numPartitions, In: src.Output})
@@ -332,7 +331,7 @@ func (fn *GroupKeyModSum[V]) ProcessBundle(dfc *DFC[V]) error {
 
 func TestGBKSum(t *testing.T) {
 	mod := 3
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: 10})
 		keyed := ParDo(s, src.Output, &KeyMod[int]{Mod: mod})
@@ -353,7 +352,7 @@ func BenchmarkGBKSum_int(b *testing.B) {
 	for _, mod := range []int{2, 3, 5, 10, 100, 1000, 10000} {
 		b.Run(fmt.Sprintf("mod_%v", mod), func(b *testing.B) {
 			discard := &DiscardFn[KV[int, int]]{}
-			pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+			pr, err := LaunchAndWait(b.Context(), func(s *Scope) error {
 				imp := Impulse(s)
 				src := ParDo(s, imp, &SourceFn{Count: b.N})
 				keyed := ParDo(s, src.Output, &KeyMod[int]{Mod: mod})
@@ -376,7 +375,7 @@ func BenchmarkGBKSum_int(b *testing.B) {
 func BenchmarkGBKSum_Lifted_int(b *testing.B) {
 	for _, mod := range []int{2, 3, 5, 10, 100, 1000, 10000} {
 		b.Run(fmt.Sprintf("mod_%v", mod), func(b *testing.B) {
-			pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+			pr, err := LaunchAndWait(b.Context(), func(s *Scope) error {
 				imp := Impulse(s)
 				src := ParDo(s, imp, &SourceFn{Count: b.N})
 				keyed := ParDo(s, src.Output, &GroupKeyModSum[int]{Mod: mod})
@@ -396,7 +395,7 @@ func BenchmarkGBKSum_Lifted_int(b *testing.B) {
 
 func TestTwoSubGraphs(t *testing.T) {
 	count := 10
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp1, imp2 := Impulse(s), Impulse(s)
 		src1, src2 := ParDo(s, imp1, &SourceFn{Count: count + 1}), ParDo(s, imp2, &SourceFn{Count: count + 2})
 		ParDo(s, src1.Output, &DiscardFn[int]{}, Name("sink1"))
@@ -422,7 +421,7 @@ func TestTwoSubGraphs(t *testing.T) {
 
 func TestMultiplexImpulse(t *testing.T) {
 	count := 10
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s) // As a Runner transform, impulses don't multiplex.
 		src1, src2 := ParDo(s, imp, &SourceFn{Count: count + 1}), ParDo(s, imp, &SourceFn{Count: count + 2})
 		ParDo(s, src1.Output, &DiscardFn[int]{}, Name("sink1"))
@@ -448,7 +447,7 @@ func TestMultiplexImpulse(t *testing.T) {
 
 func TestMultiplex(t *testing.T) {
 	count := 10
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: count})
 		ParDo(s, src.Output, &DiscardFn[int]{}, Name("sink1"))

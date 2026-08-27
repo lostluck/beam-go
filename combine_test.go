@@ -16,7 +16,6 @@
 package beam
 
 import (
-	"context"
 	"testing"
 
 	"golang.org/x/exp/constraints"
@@ -24,7 +23,7 @@ import (
 
 func TestCombineKeyedSum(t *testing.T) {
 	// We need to have all the keys, so 1.
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: 10})
 		keyedSrc := ParDo(s, src.Output, &AddFixedKeyFn[int]{})
@@ -42,7 +41,7 @@ func TestCombineKeyedSum(t *testing.T) {
 
 func TestCombineKeyedMean(t *testing.T) {
 	// We need to have all the keys, so 1.
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: 10})
 		keyedSrc := ParDo(s, src.Output, &AddFixedKeyFn[int]{})

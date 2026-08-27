@@ -16,7 +16,6 @@
 package beam
 
 import (
-	"context"
 	"testing"
 )
 
@@ -26,7 +25,7 @@ func namedDiscard[E Element](s *Scope, input PCol[E], name string) {
 }
 
 func TestSideInputIter(t *testing.T) {
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: 10})
 		onlySide := ParDo(s, imp, &OnlySideIter[int]{Side: AsSideIter(src.Output)})
@@ -42,7 +41,7 @@ func TestSideInputIter(t *testing.T) {
 }
 
 func TestSideInputMap(t *testing.T) {
-	pr, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: 10})
 		kvsrc := ParDo(s, src.Output, &KeyMod[int]{Mod: 3})

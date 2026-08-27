@@ -16,7 +16,6 @@
 package beam
 
 import (
-	"context"
 	"testing"
 )
 
@@ -61,7 +60,7 @@ func (fn *DistFn) ProcessBundle(dfc *DFC[int]) error {
 }
 
 func TestDistributionInt64(t *testing.T) {
-	pipe, err := LaunchAndWait(context.TODO(), func(s *Scope) error {
+	pipe, err := LaunchAndWait(t.Context(), func(s *Scope) error {
 		imp := Impulse(s)
 		src := ParDo(s, imp, &SourceFn{Count: 10})
 		ParDo(s, src.Output, &DistFn{}, Name("sink"))
