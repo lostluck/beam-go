@@ -149,7 +149,7 @@ func start(ctx context.Context, dfc *DFC[[]byte]) error {
 // Scope is used for building pipeline graphs.
 //
 // Scope is a hierarchical grouping for composite transforms. Scopes can be
-// enclosed in other scopes and for a tree structure. For pipeline updates,
+// enclosed in other scopes and form a tree structure. For pipeline updates,
 // the scope chain form a unique name. The scope chain can also be used for
 // monitoring and visualization purposes.
 type Scope struct {
