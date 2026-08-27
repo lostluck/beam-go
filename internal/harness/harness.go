@@ -158,19 +158,14 @@ func Main(ctx context.Context, controlEndpoint string, opts Options, exec ExecFu
 	}
 }
 
-// Dial is a convenience wrapper over grpc.Dial. It can be overridden
+// Dial is a convenience wrapper over grpc.NewClient. It can be overridden
 // to provide a customized dialing behavior.
 var Dial = DefaultDial
 
-// DefaultDial is a dialer that specifies an insecure blocking connection with a timeout.
+// DefaultDial is a dialer that specifies an insecure connection.
 func DefaultDial(ctx context.Context, endpoint string, timeout time.Duration) (*grpc.ClientConn, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	//nolint:staticcheck // DialContext with WithBlock is needed for synchronous blocking dial in SDK harness.
-	cc, err := grpc.DialContext(ctx, endpoint,
+	cc, err := grpc.NewClient(endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial server at %v: %w", endpoint, err)

@@ -311,12 +311,13 @@ func TestControl_GetOrLookupPlan(t *testing.T) {
 	}
 }
 
-func TestDefaultDial_Error(t *testing.T) {
+func TestDefaultDial(t *testing.T) {
 	ctx := t.Context()
-	_, err := DefaultDial(ctx, "invalid-endpoint-nonexistent:9999", 50*time.Millisecond)
-	if err == nil {
-		t.Errorf("expected error dialing invalid endpoint")
+	cc, err := DefaultDial(ctx, "localhost:12345", 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("unexpected error creating client: %v", err)
 	}
+	_ = cc.Close()
 }
 
 type mockBeamFnServer struct {

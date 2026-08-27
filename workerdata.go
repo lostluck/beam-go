@@ -70,6 +70,11 @@ func (e *edgeDataSource[E]) source(dc harness.DataContext, mets *metricsStore) (
 			SID:    harness.StreamID{PtransformID: e.transform, Port: e.port},
 			Output: PCol[E]{valid: true, globalIndex: e.output, localDownstreamIndex: 0},
 			Coder:  e.makeCoder(),
+			dc: &dataChannelIndex{
+				transform: e.transform,
+				index:     0,
+				split:     (1<<63 - 1),
+			},
 		},
 	}
 	return root, toConsumer
@@ -106,10 +111,17 @@ func (fn *datasource[E]) ProcessBundle(dfc *DFC[[]byte]) error {
 	}
 
 	// Track the data channel index for progress and split handling.
-	fn.dc = &dataChannelIndex{
-		transform: fn.SID.PtransformID,
-		index:     0,
-		split:     (1<<63 - 1),
+	if fn.dc == nil {
+		fn.dc = &dataChannelIndex{
+			transform: fn.SID.PtransformID,
+			index:     0,
+			split:     (1<<63 - 1),
+		}
+	} else {
+		fn.dc.mu.Lock()
+		fn.dc.index = 0
+		fn.dc.split = (1<<63 - 1)
+		fn.dc.mu.Unlock()
 	}
 
 	// TODO outputing to timers callbacks
@@ -139,6 +151,9 @@ func (fn *datasource[E]) ProcessBundle(dfc *DFC[[]byte]) error {
 var _ sourceSplitter = &datasource[int]{}
 
 func (fn *datasource[E]) splitSource(helper func(index, split int64) int64) {
+	if fn.dc == nil {
+		return
+	}
 	// We lock here to avoid moving past the new split.
 	fn.dc.mu.Lock()
 	defer fn.dc.mu.Unlock()
