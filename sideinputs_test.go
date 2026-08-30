@@ -16,7 +16,13 @@
 package beam
 
 import (
+	"reflect"
 	"testing"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 // convenience function to allow the discard type to be inferred.
@@ -87,4 +93,63 @@ func (fn *OnlySideMap[K, V]) ProcessBundle(dfc *DFC[[]byte]) error {
 		}
 		return nil
 	})
+}
+
+func TestSideInput_WindowMappingFn_Table(t *testing.T) {
+	tests := []struct {
+		name                 string
+		buildPipeline        func(s *Scope)
+		wantWindowMappingUrn string
+	}{
+		{
+			name: "GlobalWindow_SideInput",
+			buildPipeline: func(s *Scope) {
+				imp := s.Impulse()
+				src := s.ParDo(imp, &SourceFn{Count: 5})
+				_ = s.ParDo(imp, &OnlySideIter[int]{Side: AsSideIter(src.Output)})
+			},
+			wantWindowMappingUrn: "beam:window_mapping_fn:global:v1",
+		},
+		{
+			name: "FixedWindows_SideInput",
+			buildPipeline: func(s *Scope) {
+				imp := s.Impulse()
+				src := s.ParDo(imp, &SourceFn{Count: 5})
+				winSrc := s.WindowInto(src.Output, window.FixedWindows(10*time.Second))
+				_ = s.ParDo(imp, &OnlySideIter[int]{Side: AsSideIter(winSrc)})
+			},
+			wantWindowMappingUrn: "beam:window_mapping_fn:interval:v1",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Scope{g: &graph{}}
+			tc.buildPipeline(s)
+
+			pipe := s.g.marshal(map[string]reflect.Type{
+				"lostluck.dev/beam-go.SourceFn":           reflect.TypeFor[SourceFn](),
+				"lostluck.dev/beam-go.OnlySideIter[int]": reflect.TypeFor[OnlySideIter[int]](),
+			})
+			comps := pipe.GetComponents()
+
+			var foundSideInput bool
+			for _, pt := range comps.GetTransforms() {
+				if pt.GetSpec().GetUrn() == "beam:transform:pardo:v1" {
+					var payload pipepb.ParDoPayload
+					if err := proto.Unmarshal(pt.GetSpec().GetPayload(), &payload); err == nil && len(payload.GetSideInputs()) > 0 {
+						for _, si := range payload.GetSideInputs() {
+							foundSideInput = true
+							if si.GetWindowMappingFn().GetUrn() != tc.wantWindowMappingUrn {
+								t.Errorf("WindowMappingFn URN = %q, want %q", si.GetWindowMappingFn().GetUrn(), tc.wantWindowMappingUrn)
+							}
+						}
+					}
+				}
+			}
+			if !foundSideInput {
+				t.Fatalf("no side input found in translated pipeline transforms")
+			}
+		})
+	}
 }

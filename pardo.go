@@ -237,6 +237,15 @@ func (e *edgeDoFn[E]) toProtoParts(params translateParams) (spec *pipepb.Functio
 	if len(e.sides) > 0 {
 		sis = map[string]*pipepb.SideInput{}
 		for local, pattern := range e.sides {
+			windowMappingURN := "beam:window_mapping_fn:global:v1"
+			if sideInNodeID, ok := e.ins[local]; ok && params.Graph != nil && int(sideInNodeID) < len(params.Graph.nodes) {
+				sideNode := params.Graph.nodes[sideInNodeID]
+				if sideNode != nil && sideNode.windowingStrat() != nil && sideNode.windowingStrat().Fn != nil {
+					if sideNode.windowingStrat().Fn.WindowCoderURN() != "beam:coder:global_window:v1" {
+						windowMappingURN = "beam:window_mapping_fn:interval:v1"
+					}
+				}
+			}
 			sis[local] = &pipepb.SideInput{
 				AccessPattern: &pipepb.FunctionSpec{
 					Urn: pattern,
@@ -245,7 +254,7 @@ func (e *edgeDoFn[E]) toProtoParts(params translateParams) (spec *pipepb.Functio
 					Urn: "dummyViewFn",
 				},
 				WindowMappingFn: &pipepb.FunctionSpec{
-					Urn: "dummyWindowMappingFn",
+					Urn: windowMappingURN,
 				},
 			}
 		}

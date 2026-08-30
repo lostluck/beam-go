@@ -161,6 +161,7 @@ type translateParams struct {
 	TypeReg        map[string]reflect.Type
 	InternedCoders map[string]string
 	Comps          *pipepb.Components
+	Graph          *graph
 }
 
 // marshal turns a pipeline graph into a normalized Beam pipeline proto.
@@ -207,6 +208,7 @@ func (g *graph) marshal(typeReg map[string]reflect.Type) *pipepb.Pipeline {
 				DefaultEnvID:   defaultEnvID,
 				InternedCoders: internedCoders,
 				Comps:          comps,
+				Graph:          g,
 			})
 		default:
 			panic(fmt.Sprintf("unknown edge type %#v", e))
@@ -754,7 +756,12 @@ func (c *typedNode[E]) newTypeMultiEdge(ph *edgePlaceholder, cs map[string]*pipe
 	case "window_into":
 		out := getSingleValue(ph.outs)
 		in := getSingleValue(ph.ins)
-		return &edgeWindowInto[E]{index: ph.index, input: in, output: out}
+		var strat *window.Strategy
+		var payload pipepb.WindowIntoPayload
+		if err := proto.Unmarshal(ph.payload, &payload); err == nil && payload.GetWindowFn() != nil {
+			strat = windowStrategyFromFnSpec(payload.GetWindowFn())
+		}
+		return &edgeWindowInto[E]{index: ph.index, transform: ph.transform, input: in, output: out, strategy: strat}
 	case "source":
 		port, cid, err := decodePort(ph.payload)
 		if err != nil {
@@ -896,4 +903,42 @@ func decodeCombineFn(payload []byte, wrap *dofnWrap, typeReg map[string]reflect.
 	if err := json.Unmarshal(combineFnSpec.GetPayload(), &wrap, json.DefaultOptionsV2(), jsonDoFnUnmarshallers(typeReg, name)); err != nil {
 		panic(err)
 	}
+}
+
+func windowStrategyFromFnSpec(spec *pipepb.FunctionSpec) *window.Strategy {
+	if spec == nil {
+		return window.DefaultStrategy()
+	}
+	switch spec.GetUrn() {
+	case "beam:window_fn:global_windows:v1":
+		return window.NewStrategy(window.GlobalWindows())
+	case "beam:window_fn:fixed_windows:v1":
+		var p pipepb.FixedWindowsPayload
+		if err := proto.Unmarshal(spec.GetPayload(), &p); err == nil {
+			size := p.GetSize().AsDuration()
+			offset := time.Duration(0)
+			if p.GetOffset() != nil {
+				offset = time.Duration(p.GetOffset().GetNanos())
+			}
+			return window.NewStrategy(window.FixedWindows(size, offset))
+		}
+	case "beam:window_fn:sliding_windows:v1":
+		var p pipepb.SlidingWindowsPayload
+		if err := proto.Unmarshal(spec.GetPayload(), &p); err == nil {
+			period := p.GetSize().AsDuration()
+			every := p.GetPeriod().AsDuration()
+			offset := time.Duration(0)
+			if p.GetOffset() != nil {
+				offset = time.Duration(p.GetOffset().GetNanos())
+			}
+			return window.NewStrategy(window.SlidingWindows(period, every, offset))
+		}
+	case "beam:window_fn:session_windows:v1":
+		var p pipepb.SessionWindowsPayload
+		if err := proto.Unmarshal(spec.GetPayload(), &p); err == nil {
+			gap := p.GetGapSize().AsDuration()
+			return window.NewStrategy(window.Sessions(gap))
+		}
+	}
+	return window.DefaultStrategy()
 }

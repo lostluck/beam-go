@@ -16,6 +16,7 @@
 package beam
 
 import (
+	"google.golang.org/protobuf/proto"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"lostluck.dev/beam-go/window"
 )
@@ -45,21 +46,25 @@ func (s *Scope) WindowInto[E Element](input PCol[E], winFn window.WindowFn, opts
 		windowStrategy: strat,
 	})
 
-	return PCol[E]{globalIndex: nodeID}
+	return PCol[E]{valid: true, globalIndex: nodeID}
 }
 
 type edgeWindowInto[E Element] struct {
-	index    edgeIndex
-	input    nodeIndex
-	output   nodeIndex
-	strategy *window.Strategy
+	index     edgeIndex
+	transform string
+	input     nodeIndex
+	output    nodeIndex
+	strategy  *window.Strategy
 
 	instance *windowIntoDoFn[E]
 	procs    []processor
 }
 
 func (e *edgeWindowInto[E]) protoID() string {
-	return "invalid-WindowInto-id"
+	if e.transform != "" {
+		return e.transform
+	}
+	return "WindowInto"
 }
 
 func (e *edgeWindowInto[E]) edgeID() edgeIndex {
@@ -74,14 +79,18 @@ func (e *edgeWindowInto[E]) outputs() map[string]nodeIndex {
 	return map[string]nodeIndex{"o0": e.output}
 }
 
-func (e *edgeWindowInto[E]) toProtoParts(translateParams) (spec *pipepb.FunctionSpec, envID, name string) {
-	spec = &pipepb.FunctionSpec{
-		Urn: "beam:transform:window_into:v1",
-	}
+func (e *edgeWindowInto[E]) toProtoParts(params translateParams) (spec *pipepb.FunctionSpec, envID, name string) {
+	var payload []byte
 	if e.strategy != nil && e.strategy.Fn != nil {
-		spec.Payload = e.strategy.Fn.ToProto().GetPayload()
+		payload, _ = proto.Marshal(&pipepb.WindowIntoPayload{
+			WindowFn: e.strategy.Fn.ToProto(),
+		})
 	}
-	envID = "" // Runner transform
+	spec = &pipepb.FunctionSpec{
+		Urn:     "beam:transform:window_into:v1",
+		Payload: payload,
+	}
+	envID = params.DefaultEnvID
 	name = "WindowInto"
 	return spec, envID, name
 }
@@ -89,7 +98,7 @@ func (e *edgeWindowInto[E]) toProtoParts(translateParams) (spec *pipepb.Function
 func (e *edgeWindowInto[E]) windowInto() (string, any, []processor) {
 	if e.instance == nil {
 		e.instance = &windowIntoDoFn[E]{
-			Output:   PCol[E]{globalIndex: e.output},
+			Output:   PCol[E]{valid: true, globalIndex: e.output, localDownstreamIndex: 0},
 			Strategy: e.strategy,
 		}
 		e.procs = []processor{e.instance.Output.newDFC(e.output)}
@@ -111,6 +120,20 @@ type windowIntoDoFn[E Element] struct {
 
 func (fn *windowIntoDoFn[E]) ProcessBundle(dfc *DFC[E]) error {
 	return dfc.Process(func(ec ElmC, elm E) error {
+		if fn.Strategy != nil && fn.Strategy.Fn != nil {
+			windows := fn.Strategy.Fn.AssignWindows(ec.EventTime())
+			subEC := ElmC{
+				elmContext: elmContext{
+					eventTime: ec.EventTime(),
+					windows:   windows,
+					window:    nil,
+					pane:      ec.pane,
+				},
+				pcollections: ec.pcollections,
+			}
+			fn.Output.Emit(subEC, elm)
+			return nil
+		}
 		fn.Output.Emit(ec, elm)
 		return nil
 	})

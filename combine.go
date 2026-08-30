@@ -18,6 +18,7 @@ package beam
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/go-json-experiment/json"
 	"google.golang.org/protobuf/proto"
@@ -198,11 +199,19 @@ type liftedAddingCombine[K Keys, I, A Element] struct {
 	ObserveWindow[window.BoundedWindow]
 }
 
+type keyWindow[K comparable] struct {
+	key K
+	win window.BoundedWindow
+}
+
+type accumEntry[A any] struct {
+	accum     A
+	eventTime time.Time
+	window    window.BoundedWindow
+	pane      coders.PaneInfo
+}
+
 func (fn *liftedAddingCombine[K, I, A]) ProcessBundle(dfc *DFC[KV[K, I]]) error {
-	// TODO, add KeyObserver so combines can access the key if needed.
-	// TODO, add a MetricsObserver
-	// TODO, add a context observer to get a "real" context from this.
-	// Perhaps these are all a single "Observer" type.
 	createA := func() A {
 		var a A
 		return a
@@ -211,48 +220,72 @@ func (fn *liftedAddingCombine[K, I, A]) ProcessBundle(dfc *DFC[KV[K, I]]) error 
 		createA = ca.CreateAccumulator
 	}
 
-	// Currently cheating, use the KeyCoder, and efficient byte to string conversions for lookup
-	// TODO also have a layer for windows.
-	// TODO allow for ElmC caching for picking merge timestamps.
-	cache := map[K]A{}
-
+	cache := map[keyWindow[K]]accumEntry[A]{}
 	const cacheMax = 10000
 
 	ai, ok := fn.Merger.(InputAdder[A, I])
 	if !ok {
 		panic(fmt.Errorf("combiner %T doesn't support the AddInput method type", fn.Merger))
 	}
-	var prevElmC ElmC
+
 	if err := dfc.Process(func(ec ElmC, elm KV[K, I]) error {
-		prevElmC = ec
-		a, ok := cache[elm.Key]
-		if !ok {
-			a = createA()
+		win := fn.ObserveWindow.Of(ec)
+		kw := keyWindow[K]{key: elm.Key, win: win}
+		entry, exists := cache[kw]
+		if !exists {
+			entry = accumEntry[A]{
+				accum:     createA(),
+				eventTime: ec.EventTime(),
+				window:    win,
+				pane:      ec.pane,
+			}
 		}
-		a = ai.AddInput(a, elm.Value)
-		cache[elm.Key] = a
+		entry.accum = ai.AddInput(entry.accum, elm.Value)
+		if ec.EventTime().Before(entry.eventTime) {
+			entry.eventTime = ec.EventTime()
+		}
+		cache[kw] = entry
 
-		for k, ca := range cache {
-			// If the cache is small enough, no evictions.
-			if len(cache) < cacheMax {
-				return nil
+		if len(cache) >= cacheMax {
+			for k, ca := range cache {
+				if k == kw {
+					continue // never evict current key/window
+				}
+				delete(cache, k)
+				outEC := ElmC{
+					elmContext: elmContext{
+						eventTime: ca.eventTime,
+						windows:   []window.BoundedWindow{ca.window},
+						window:    ca.window,
+						pane:      ca.pane,
+					},
+					pcollections: ec.pcollections,
+				}
+				fn.Output.Emit(outEC, KV[K, A]{Key: k.key, Value: ca.accum})
+				if len(cache) < cacheMax {
+					break
+				}
 			}
-			if k == elm.Key {
-				continue // never evict the current key. Leads to post grouping errors.
-			}
-			delete(cache, k) // Remove this key and accumulator.
-
-			// TODO, use a proper timestamp & window to make the ElmC.
-			fn.Output.Emit(ec, KV[K, A]{Key: k, Value: ca})
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
+
 	fn.Do(dfc, func() error {
 		for k, ca := range cache {
-			fn.Output.Emit(prevElmC, KV[K, A]{Key: k, Value: ca})
+			outEC := ElmC{
+				elmContext: elmContext{
+					eventTime: ca.eventTime,
+					windows:   []window.BoundedWindow{ca.window},
+					window:    ca.window,
+					pane:      ca.pane,
+				},
+				pcollections: dfc.downstream,
+			}
+			fn.Output.Emit(outEC, KV[K, A]{Key: k.key, Value: ca.accum})
 		}
+		cache = map[keyWindow[K]]accumEntry[A]{}
 		return nil
 	})
 	return nil
@@ -263,17 +296,12 @@ type liftedMergedCombine[K Keys, A Element] struct {
 
 	Merger AccumulatorMerger[A]
 
-	// TODO implement and use WindowObserver
 	Output PCol[KV[K, A]]
 	OnBundleFinish
 	ObserveWindow[window.BoundedWindow]
 }
 
 func (fn *liftedMergedCombine[K, A]) ProcessBundle(dfc *DFC[KV[K, A]]) error {
-	// TODO, add KeyObserver so combines can access the key if needed.
-	// TODO, add a MetricsObserver
-	// TODO, add a context observer to get a "real" context from this.
-	// Perhaps these are all a single "Observer" type.
 	createA := func() A {
 		var a A
 		return a
@@ -282,44 +310,67 @@ func (fn *liftedMergedCombine[K, A]) ProcessBundle(dfc *DFC[KV[K, A]]) error {
 		createA = ca.CreateAccumulator
 	}
 
-	// Currently cheating, use the KeyCoder, and efficient byte to string conversions for lookup
-	// TODO also have a layer for windows.
-	// TODO allow for ElmC caching for picking merge timestamps.
-	cache := map[K]A{}
-
+	cache := map[keyWindow[K]]accumEntry[A]{}
 	const cacheMax = 10000
 
-	var prevElmC ElmC
 	if err := dfc.Process(func(ec ElmC, elm KV[K, A]) error {
-		prevElmC = ec
-		a, ok := cache[elm.Key]
-		if !ok {
-			a = createA()
+		win := fn.ObserveWindow.Of(ec)
+		kw := keyWindow[K]{key: elm.Key, win: win}
+		entry, exists := cache[kw]
+		if !exists {
+			entry = accumEntry[A]{
+				accum:     createA(),
+				eventTime: ec.EventTime(),
+				window:    win,
+				pane:      ec.pane,
+			}
 		}
-		a = fn.Merger.MergeAccumulators(a, elm.Value)
-		cache[elm.Key] = a
+		entry.accum = fn.Merger.MergeAccumulators(entry.accum, elm.Value)
+		if ec.EventTime().Before(entry.eventTime) {
+			entry.eventTime = ec.EventTime()
+		}
+		cache[kw] = entry
 
-		for k, ca := range cache {
-			// If the cache is small enough, no evictions.
-			if len(cache) < cacheMax {
-				return nil
+		if len(cache) >= cacheMax {
+			for k, ca := range cache {
+				if k == kw {
+					continue // never evict current key/window
+				}
+				delete(cache, k)
+				outEC := ElmC{
+					elmContext: elmContext{
+						eventTime: ca.eventTime,
+						windows:   []window.BoundedWindow{ca.window},
+						window:    ca.window,
+						pane:      ca.pane,
+					},
+					pcollections: ec.pcollections,
+				}
+				fn.Output.Emit(outEC, KV[K, A]{Key: k.key, Value: ca.accum})
+				if len(cache) < cacheMax {
+					break
+				}
 			}
-			if k == elm.Key {
-				continue // never evict the current key. Leads to post grouping errors.
-			}
-			delete(cache, k) // Remove this key and accumulator.
-
-			// TODO, use a proper timestamp & window to make the ElmC.
-			fn.Output.Emit(ec, KV[K, A]{Key: k, Value: ca})
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
+
 	fn.Do(dfc, func() error {
 		for k, ca := range cache {
-			fn.Output.Emit(prevElmC, KV[K, A]{Key: k, Value: ca})
+			outEC := ElmC{
+				elmContext: elmContext{
+					eventTime: ca.eventTime,
+					windows:   []window.BoundedWindow{ca.window},
+					window:    ca.window,
+					pane:      ca.pane,
+				},
+				pcollections: dfc.downstream,
+			}
+			fn.Output.Emit(outEC, KV[K, A]{Key: k.key, Value: ca.accum})
 		}
+		cache = map[keyWindow[K]]accumEntry[A]{}
 		return nil
 	})
 	return nil
