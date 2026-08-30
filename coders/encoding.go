@@ -17,6 +17,7 @@ package coders
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"time"
 
@@ -194,6 +195,111 @@ func (e *Encoder) IntervalWindow(end time.Time, dur time.Duration) {
 func (e *Encoder) GlobalWindow() {
 }
 
+// Timing represents the timing of a pane firing relative to the watermark.
+type Timing byte
+
+const (
+	TimingEarly   Timing = 0
+	TimingOnTime  Timing = 1
+	TimingLate    Timing = 2
+	TimingUnknown Timing = 3
+)
+
+func (t Timing) String() string {
+	switch t {
+	case TimingEarly:
+		return "EARLY"
+	case TimingOnTime:
+		return "ON_TIME"
+	case TimingLate:
+		return "LATE"
+	case TimingUnknown:
+		return "UNKNOWN"
+	default:
+		return fmt.Sprintf("Timing(%d)", t)
+	}
+}
+
+// PaneInfo contains information about the pane firing for an element.
+type PaneInfo struct {
+	Timing              Timing
+	IsFirst             bool
+	IsLast              bool
+	Index               int64
+	NonSpeculativeIndex int64
+}
+
+// NoFiringPane is the default pane info when no specific firing has occurred.
+var NoFiringPane = PaneInfo{
+	Timing:              TimingUnknown,
+	IsFirst:             true,
+	IsLast:              true,
+	Index:               0,
+	NonSpeculativeIndex: 0,
+}
+
+// PaneOnTime produces an on-time PaneInfo.
+func PaneOnTime(index int64, isFirst, isLast bool) PaneInfo {
+	return PaneInfo{
+		Timing:              TimingOnTime,
+		IsFirst:             isFirst,
+		IsLast:              isLast,
+		Index:               index,
+		NonSpeculativeIndex: index,
+	}
+}
+
+// PaneEarly produces an early PaneInfo.
+func PaneEarly(index int64, isFirst bool) PaneInfo {
+	return PaneInfo{
+		Timing:              TimingEarly,
+		IsFirst:             isFirst,
+		IsLast:              false,
+		Index:               index,
+		NonSpeculativeIndex: -1,
+	}
+}
+
+// PaneLate produces a late PaneInfo.
+func PaneLate(index, nonSpecIndex int64, isLast bool) PaneInfo {
+	return PaneInfo{
+		Timing:              TimingLate,
+		IsFirst:             false,
+		IsLast:              isLast,
+		Index:               index,
+		NonSpeculativeIndex: nonSpecIndex,
+	}
+}
+
+// Pane encodes pane info into bytes according to the Beam standard coder.
+func (e *Encoder) Pane(pane PaneInfo) {
+	var encodingType byte
+	if pane.Index == 0 && pane.NonSpeculativeIndex == 0 {
+		encodingType = 0x00
+	} else if pane.NonSpeculativeIndex == -1 || (pane.Timing != TimingEarly && pane.NonSpeculativeIndex == pane.Index) {
+		encodingType = 0x01
+	} else {
+		encodingType = 0x02
+	}
+
+	var b  = (encodingType & 0x0F) << 4
+	b |= (byte(pane.Timing) & 0x03) << 2
+	if pane.IsLast {
+		b |= 1 << 1
+	}
+	if pane.IsFirst {
+		b |= 1 << 0
+	}
+
+	e.Grow(1)[0] = b
+	if encodingType == 0x01 {
+		e.Varint(uint64(pane.Index))
+	} else if encodingType == 0x02 {
+		e.Varint(uint64(pane.Index))
+		e.Varint(uint64(pane.NonSpeculativeIndex))
+	}
+}
+
 // GWC is a nonce representing the Global Window Coder.
 type GWC struct{}
 
@@ -206,7 +312,11 @@ func (GWC) decode(dec *Decoder) {
 	dec.GlobalWindow()
 }
 
-// EncodeWindowedValueHeader encodes the WindowedValue but not the value
+func (GWC) Decode(dec *Decoder) {
+	dec.GlobalWindow()
+}
+
+// EncodeWindowedValueHeader encodes the WindowedValue header but not the value.
 //
 //	Encodes an element, the windows it is in, the timestamp of the element,
 //
@@ -268,14 +378,6 @@ func EncodeWindowedValueHeader[W window](e *Encoder, eventTime time.Time, window
 	e.Pane(pane)
 }
 
-// PaneInfo is an experimental holder for pane info.
-type PaneInfo struct{}
-
-// Pane decodes pane info from bytes.
-func (e *Encoder) Pane(pane PaneInfo) {
-	e.Grow(1)[0] = 0x04
-}
-
 // Nullable handles the nil bit of a value.
 // Wraps a coder of a potentially null value
 // A Nullable Type is encoded by:
@@ -292,7 +394,6 @@ func (e *Encoder) Nullable(isNil bool) {
 
 type window interface {
 	Encode(e *Encoder)
-	decode(d *Decoder)
 }
 
 // Timestamp encodes event times in the following fashion.

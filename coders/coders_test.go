@@ -16,6 +16,7 @@
 package coders
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"testing"
@@ -193,8 +194,8 @@ func (w testWindow) Encode(enc *Encoder) {
 	enc.Int(w.val)
 }
 
-func (w testWindow) decode(dec *Decoder) {
-	_ = dec.Int()
+func (w *testWindow) decode(dec *Decoder) {
+	w.val = dec.Int()
 }
 
 func (w testWindow) String() string {
@@ -226,29 +227,14 @@ func TestCoders_SpecialTypes(t *testing.T) {
 	// IntervalWindow & Nullable
 	enc.Reset(0)
 	enc.IntervalWindow(time.UnixMilli(1000), time.Second)
+	dec = NewDecoder(enc.Data())
+	end, dur := dec.IntervalWindow()
+	if end.UnixMilli() != 1000 || dur != time.Second {
+		t.Errorf("got interval window (%v, %v), want (1000ms, 1s)", end, dur)
+	}
+
+	enc.Reset(0)
 	enc.Nullable(true)
-
-	// Pane
-	enc.Reset(0)
-	enc.Pane(PaneInfo{})
-	dec = NewDecoder(enc.Data())
-	_ = dec.Pane()
-
-	// WindowedValueHeader decoding
-	enc.Reset(0)
-	now := time.UnixMilli(987654000)
-	enc.Timestamp(now)
-	enc.Uint32(1)
-	enc.Int(123)
-	enc.Pane(PaneInfo{})
-	dec = NewDecoder(enc.Data())
-	gotTime, gotWins, _ := DecodeWindowedValueHeader[testWindow](dec)
-	if gotTime.UnixMilli() != now.UnixMilli() {
-		t.Errorf("WindowedValueHeader time = %v, want %v", gotTime, now)
-	}
-	if len(gotWins) != 1 {
-		t.Errorf("gotWins = %+v, want 1 window", gotWins)
-	}
 
 	// Byte / StringUtf8
 	enc.Reset(0)
@@ -492,5 +478,144 @@ func BenchmarkStructCoder(b *testing.B) {
 			_ = refCoder.Decode(dec)
 		}
 	})
+}
+
+func TestPaneInfo(t *testing.T) {
+	tests := []struct {
+		name      string
+		pane      PaneInfo
+		wantBytes []byte
+	}{
+		{
+			name:      "no firing pane (0x0F)",
+			pane:      NoFiringPane,
+			wantBytes: []byte{0x0F},
+		},
+		{
+			name: "single byte on-time first and last pane (0x07)",
+			pane: PaneInfo{
+				Timing:              TimingOnTime,
+				IsFirst:             true,
+				IsLast:              true,
+				Index:               0,
+				NonSpeculativeIndex: 0,
+			},
+			wantBytes: []byte{0x07},
+		},
+		{
+			name: "single byte early first pane (0x01)",
+			pane: PaneInfo{
+				Timing:              TimingEarly,
+				IsFirst:             true,
+				IsLast:              false,
+				Index:               0,
+				NonSpeculativeIndex: 0,
+			},
+			wantBytes: []byte{0x01},
+		},
+		{
+			name: "single byte late last pane (0x0A)",
+			pane: PaneInfo{
+				Timing:              TimingLate,
+				IsFirst:             false,
+				IsLast:              true,
+				Index:               0,
+				NonSpeculativeIndex: 0,
+			},
+			wantBytes: []byte{0x0A},
+		},
+		{
+			name:      "1-varint early pane (index 7, nonSpec -1, isFirst true)",
+			pane:      PaneEarly(7, true),
+			wantBytes: []byte{0x11, 0x07},
+		},
+		{
+			name:      "1-varint on-time pane (index 5, nonSpec 5, isFirst false, isLast false)",
+			pane:      PaneOnTime(5, false, false),
+			wantBytes: []byte{0x14, 0x05},
+		},
+		{
+			name: "2-varint on-time pane matching standard coders test vector (false, true, ON_TIME, 30, 40)",
+			pane: PaneInfo{
+				Timing:              TimingOnTime,
+				IsFirst:             false,
+				IsLast:              true,
+				Index:               30,
+				NonSpeculativeIndex: 40,
+			},
+			wantBytes: []byte{0x26, 0x1E, 0x28},
+		},
+		{
+			name:      "2-varint late pane (false, true, LATE, 100, 20)",
+			pane:      PaneLate(100, 20, true),
+			wantBytes: []byte{0x2A, 0x64, 0x14},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			enc := NewEncoder()
+			enc.Pane(tc.pane)
+			if got := enc.Data(); !bytes.Equal(got, tc.wantBytes) {
+				t.Errorf("Encode Pane(%+v) = %x, want %x", tc.pane, got, tc.wantBytes)
+			}
+			dec := NewDecoder(tc.wantBytes)
+			gotDecoded := dec.Pane()
+			if gotDecoded != tc.pane {
+				t.Errorf("Decode Pane(%x) = %+v, want %+v", tc.wantBytes, gotDecoded, tc.pane)
+			}
+		})
+	}
+}
+
+func TestWindowedValueHeader(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventTime time.Time
+		windows   []testWindow
+		pane      PaneInfo
+	}{
+		{
+			name:      "single window with NoFiringPane",
+			eventTime: time.UnixMilli(1234567890),
+			windows:   []testWindow{{val: 42}},
+			pane:      NoFiringPane,
+		},
+		{
+			name:      "multiple windows with on-time pane",
+			eventTime: time.UnixMilli(9876543210),
+			windows:   []testWindow{{val: 10}, {val: 20}, {val: 30}},
+			pane:      PaneOnTime(3, false, true),
+		},
+		{
+			name:      "zero windows with early pane",
+			eventTime: time.UnixMilli(1000),
+			windows:   []testWindow{},
+			pane:      PaneEarly(1, true),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			enc := NewEncoder()
+			EncodeWindowedValueHeader(enc, tc.eventTime, tc.windows, tc.pane)
+			dec := NewDecoder(enc.Data())
+			gotTime, gotWins, gotPane := DecodeWindowedValueHeader[testWindow](dec)
+			if gotTime.UnixMilli() != tc.eventTime.UnixMilli() {
+				t.Errorf("got time = %v, want %v", gotTime, tc.eventTime)
+			}
+			if len(gotWins) != len(tc.windows) {
+				t.Fatalf("got %d windows, want %d", len(gotWins), len(tc.windows))
+			}
+			for i := range gotWins {
+				if gotWins[i].val != tc.windows[i].val {
+					t.Errorf("window[%d] val = %v, want %v", i, gotWins[i].val, tc.windows[i].val)
+				}
+			}
+			if gotPane != tc.pane {
+				t.Errorf("got pane = %+v, want %+v", gotPane, tc.pane)
+			}
+		})
+	}
 }
 

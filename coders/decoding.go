@@ -197,10 +197,49 @@ func (d *Decoder) Timestamp() time.Time {
 func (d *Decoder) GlobalWindow() {
 }
 
-// Pane decodes a PaneInfo.
+// IntervalWindow decodes an interval window's end time and duration in milliseconds.
+//
+// This matches with "beam:coder:interval_window:v1" of the beam_runner_api.proto coders.
+func (d *Decoder) IntervalWindow() (end time.Time, dur time.Duration) {
+	end = d.Timestamp()
+	dur = time.Duration(d.Varint()) * time.Millisecond
+	return end, dur
+}
+
+// Pane decodes a PaneInfo from the encoded byte according to the Beam standard coder.
 func (d *Decoder) Pane() PaneInfo {
-	d.Read(1)
-	return PaneInfo{}
+	b := d.Read(1)[0]
+	encodingType := (b >> 4) & 0x0F
+	timing := Timing((b >> 2) & 0x03)
+	isLast := (b & 0x02) != 0
+	isFirst := (b & 0x01) != 0
+
+	var index, nonSpecIndex int64
+	switch encodingType {
+	case 0x00:
+		index = 0
+		nonSpecIndex = 0
+	case 0x01:
+		index = int64(d.Varint())
+		if timing == TimingEarly {
+			nonSpecIndex = -1
+		} else {
+			nonSpecIndex = index
+		}
+	case 0x02:
+		index = int64(d.Varint())
+		nonSpecIndex = int64(d.Varint())
+	default:
+		panic(makeDecodeError("invalid pane encoding type: %d", encodingType))
+	}
+
+	return PaneInfo{
+		Timing:              timing,
+		IsFirst:             isFirst,
+		IsLast:              isLast,
+		Index:               index,
+		NonSpeculativeIndex: nonSpecIndex,
+	}
 }
 
 // DecodeWindowedValueHeader produces the eventime, the windows, and pane from
@@ -209,8 +248,13 @@ func DecodeWindowedValueHeader[W window](d *Decoder) (time.Time, []W, PaneInfo) 
 	et := d.Timestamp()
 	n := d.Uint32()
 	windows := make([]W, int(n))
-	for _, w := range windows {
-		w.decode(d)
+	for i := range windows {
+		var aw any = &windows[i]
+		if decw, ok := aw.(interface{ decode(d *Decoder) }); ok {
+			decw.decode(d)
+		} else if decw, ok := aw.(interface{ Decode(d *Decoder) }); ok {
+			decw.Decode(d)
+		}
 	}
 	pane := d.Pane()
 	return et, windows, pane

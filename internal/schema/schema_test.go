@@ -28,6 +28,7 @@ import (
 	"gopkg.in/yaml.v2"
 	"lostluck.dev/beam-go/coders"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 var (
@@ -318,6 +319,53 @@ func TestStandardRowCoders(t *testing.T) {
 					t.Errorf("round trip decode-encode not equal: want %v, got %v", want, got)
 				}
 			})
+		}
+	}
+}
+
+func TestStandardWindowCoders(t *testing.T) {
+	specs := bytes.Split(standardCodersYaml, []byte("\n---\n"))
+	for i, data := range specs {
+		spec := spec{}
+		if err := yaml.Unmarshal(data, &spec); err != nil {
+			t.Errorf("unable to parse yaml: %v %q", err, data)
+			continue
+		}
+
+		coder := spec.Coder
+		if coder.Urn == "" {
+			t.Fatalf("decode error, empty urn")
+		}
+
+		switch coder.Urn {
+		case "beam:coder:global_window:v1":
+			underTest := window.GlobalWindowCoder{}
+			for _, v := range spec.Examples {
+				t.Run(fmt.Sprintf("global_window-%03d", i), func(t *testing.T) {
+					k, err := charmap.ISO8859_1.NewEncoder().String(v.Key.(string))
+					if err != nil {
+						t.Fatalf("error recoding encoded bytes: %v", err)
+					}
+					r := coders.Decode(underTest, []byte(k))
+					if got, want := coders.Encode(underTest, r), []byte(k); !cmp.Equal(got, want) {
+						t.Errorf("round trip decode-encode not equal: want %v, got %v", want, got)
+					}
+				})
+			}
+		case "beam:coder:interval_window:v1":
+			underTest := window.IntervalWindowCoder{}
+			for _, v := range spec.Examples {
+				t.Run(fmt.Sprintf("interval_window-%03d", i), func(t *testing.T) {
+					k, err := charmap.ISO8859_1.NewEncoder().String(v.Key.(string))
+					if err != nil {
+						t.Fatalf("error recoding encoded bytes: %v", err)
+					}
+					r := coders.Decode(underTest, []byte(k))
+					if got, want := coders.Encode(underTest, r), []byte(k); !cmp.Equal(got, want) {
+						t.Errorf("round trip decode-encode not equal: want %v, got %v", want, got)
+					}
+				})
+			}
 		}
 	}
 }
