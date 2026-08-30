@@ -131,6 +131,9 @@ func (g *graph) initEmitter(emt emitIface, global edgeIndex, input nodeIndex, na
 	globalIndex := g.curNodeIndex()
 	emt.setPColKey(globalIndex, localIndex, nil)
 	node := emt.newNode(globalIndex.String(), globalIndex, global, g.nodes[input].bounded())
+	if input >= 0 && int(input) < len(g.nodes) && g.nodes[input] != nil {
+		node.setWindowingStrat(g.nodes[input].windowingStrat())
+	}
 	g.nodes = append(g.nodes, node)
 	outs[name] = globalIndex
 }

@@ -42,7 +42,11 @@ func (s *Scope) GBK[K Keys, V Element](input PCol[KV[K, V]], opts ...Options) PC
 	s.g.consumers[input.globalIndex] = append(s.g.consumers[input.globalIndex], edgeID)
 
 	s.g.edges = append(s.g.edges, &edgeGBK[K, V]{index: edgeID, input: input.globalIndex, output: nodeID, opts: opt})
-	s.g.nodes = append(s.g.nodes, &typedNode[KV[K, Iter[V]]]{index: nodeID, parentEdge: edgeID})
+	s.g.nodes = append(s.g.nodes, &typedNode[KV[K, Iter[V]]]{
+		index:          nodeID,
+		parentEdge:     edgeID,
+		windowStrategy: s.g.nodes[input.globalIndex].windowingStrat(),
+	})
 
 	return PCol[KV[K, Iter[V]]]{globalIndex: nodeID}
 }
@@ -96,7 +100,11 @@ func (s *Scope) Reshuffle[E Element](input PCol[E], opts ...Options) PCol[E] {
 	s.g.consumers[input.globalIndex] = append(s.g.consumers[input.globalIndex], edgeID)
 
 	s.g.edges = append(s.g.edges, &edgeReshuffle[E]{index: edgeID, input: input.globalIndex, output: nodeID, opts: opt})
-	s.g.nodes = append(s.g.nodes, &typedNode[E]{index: nodeID, parentEdge: edgeID})
+	s.g.nodes = append(s.g.nodes, &typedNode[E]{
+		index:          nodeID,
+		parentEdge:     edgeID,
+		windowStrategy: s.g.nodes[input.globalIndex].windowingStrat(),
+	})
 
 	return PCol[E]{globalIndex: nodeID}
 }

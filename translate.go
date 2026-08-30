@@ -32,6 +32,7 @@ import (
 	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"lostluck.dev/beam-go/internal/pipelinex"
+	"lostluck.dev/beam-go/window"
 )
 
 // The result of translate should be a graph with all the
@@ -169,30 +170,10 @@ func (g *graph) marshal(typeReg map[string]reflect.Type) *pipepb.Pipeline {
 	defaultEnvID := "go"
 
 	comps := &pipepb.Components{
-		Transforms:   map[string]*pipepb.PTransform{},
-		Pcollections: map[string]*pipepb.PCollection{},
-		WindowingStrategies: map[string]*pipepb.WindowingStrategy{
-			"global": {
-				WindowFn: &pipepb.FunctionSpec{
-					Urn: "beam:window_fn:global_windows:v1",
-				},
-				MergeStatus:   pipepb.MergeStatus_NON_MERGING,
-				WindowCoderId: "gwc",
-				Trigger: &pipepb.Trigger{
-					Trigger: &pipepb.Trigger_Default_{Default: &pipepb.Trigger_Default{}},
-				},
-				AccumulationMode: pipepb.AccumulationMode_DISCARDING,
-				OutputTime:       pipepb.OutputTime_END_OF_WINDOW,
-				ClosingBehavior:  pipepb.ClosingBehavior_EMIT_IF_NONEMPTY,
-				AllowedLateness:  0,
-				OnTimeBehavior:   pipepb.OnTimeBehavior_FIRE_IF_NONEMPTY,
-			},
-		},
-		Coders: map[string]*pipepb.Coder{
-			"gwc": {
-				Spec: &pipepb.FunctionSpec{Urn: "beam:coder:global_window:v1"},
-			},
-		},
+		Transforms:          map[string]*pipepb.PTransform{},
+		Pcollections:        map[string]*pipepb.PCollection{},
+		WindowingStrategies: map[string]*pipepb.WindowingStrategy{},
+		Coders:              map[string]*pipepb.Coder{},
 		Environments: map[string]*pipepb.Environment{
 			defaultEnvID: {
 				Urn:           "go",
@@ -249,11 +230,12 @@ func (g *graph) marshal(typeReg map[string]reflect.Type) *pipepb.Pipeline {
 	}
 
 	for i, node := range g.nodes {
+		wsID := addWindowingStrategy(node.windowingStrat(), internedCoders, comps)
 		comps.Pcollections[nodeIndex(i).String()] = &pipepb.PCollection{
 			UniqueName:          nodeIndex(i).String(), //  TODO make this "Parent.Output"
 			CoderId:             node.addCoder(internedCoders, comps.GetCoders()),
 			IsBounded:           bounded(node),
-			WindowingStrategyId: "global",
+			WindowingStrategyId: wsID,
 			DisplayData:         nil,
 		}
 	}
@@ -268,6 +250,74 @@ func (g *graph) marshal(typeReg map[string]reflect.Type) *pipepb.Pipeline {
 		panic(err)
 	}
 	return pipe
+}
+
+func addWindowingStrategy(strat *window.Strategy, internCoders map[string]string, comps *pipepb.Components) string {
+	if strat == nil {
+		strat = window.DefaultStrategy()
+	}
+	if strat.Fn == nil {
+		strat.Fn = window.GlobalWindows()
+	}
+
+	urn := strat.Fn.WindowCoderURN()
+	wcid, ok := internCoders[urn]
+	if !ok {
+		if urn == "beam:coder:global_window:v1" {
+			wcid = "gwc"
+		} else if urn == "beam:coder:interval_window:v1" {
+			wcid = "iwc"
+		} else {
+			wcid = fmt.Sprintf("wc_%d", len(comps.Coders))
+		}
+		if comps.Coders == nil {
+			comps.Coders = map[string]*pipepb.Coder{}
+		}
+		comps.Coders[wcid] = &pipepb.Coder{
+			Spec: &pipepb.FunctionSpec{Urn: urn},
+		}
+		internCoders[urn] = wcid
+	}
+
+	var trigPb *pipepb.Trigger
+	if strat.Trigger != nil {
+		trigPb = strat.Trigger.ToProto()
+	} else {
+		trigPb = &pipepb.Trigger{
+			Trigger: &pipepb.Trigger_Default_{Default: &pipepb.Trigger_Default{}},
+		}
+	}
+
+	wsPb := &pipepb.WindowingStrategy{
+		WindowFn:         strat.Fn.ToProto(),
+		MergeStatus:      strat.Fn.MergeStatus(),
+		WindowCoderId:    wcid,
+		Trigger:          trigPb,
+		AccumulationMode: strat.AccumulationMode,
+		OutputTime:       strat.OutputTime,
+		ClosingBehavior:  strat.ClosingBehavior,
+		AllowedLateness:  strat.AllowedLateness.Milliseconds(),
+		OnTimeBehavior:   strat.OnTimeBehavior,
+	}
+
+	if comps.WindowingStrategies == nil {
+		comps.WindowingStrategies = map[string]*pipepb.WindowingStrategy{}
+	}
+
+	for id, existing := range comps.WindowingStrategies {
+		if proto.Equal(existing, wsPb) {
+			return id
+		}
+	}
+
+	var wsID string
+	if strat.Fn.WindowCoderURN() == "beam:coder:global_window:v1" && len(comps.WindowingStrategies) == 0 {
+		wsID = "global"
+	} else {
+		wsID = fmt.Sprintf("ws_%d", len(comps.WindowingStrategies))
+	}
+	comps.WindowingStrategies[wsID] = wsPb
+	return wsID
 }
 
 func (n *typedNode[E]) addCoder(intern map[string]string, coders map[string]*pipepb.Coder) string {
@@ -554,6 +604,8 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 			addPlaceholder(pt, tid, "sink")
 		case "beam:transform:flatten:v1":
 			addPlaceholder(pt, tid, "flatten")
+		case "beam:transform:window_into:v1":
+			addPlaceholder(pt, tid, "window_into")
 		case "beam:transform:group_by_key:v1":
 			panic("Worker side GBKs unimplemented. Runner error.")
 		case "beam:transform:pardo:v1",
@@ -699,6 +751,10 @@ func (c *typedNode[E]) newTypeMultiEdge(ph *edgePlaceholder, cs map[string]*pipe
 	case "flatten":
 		out := getSingleValue(ph.outs)
 		return &edgeFlatten[E]{index: ph.index, transform: ph.transform, ins: maps.Values(ph.ins), output: out}
+	case "window_into":
+		out := getSingleValue(ph.outs)
+		in := getSingleValue(ph.ins)
+		return &edgeWindowInto[E]{index: ph.index, input: in, output: out}
 	case "source":
 		port, cid, err := decodePort(ph.payload)
 		if err != nil {

@@ -25,6 +25,7 @@ import (
 	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/internal/harness"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 // graph.go holds the structures for the deferred processing graph.
@@ -69,7 +70,8 @@ type graph struct {
 type node interface {
 	protoID() string
 	bounded() bool
-	windowingStrat()
+	windowingStrat() *window.Strategy
+	setWindowingStrat(*window.Strategy)
 	addCoder(intern map[string]string, coders map[string]*pipepb.Coder) string
 	newTypeMultiEdge(*edgePlaceholder, map[string]*pipepb.Coder) multiEdge
 	initCoder(cid string, cs map[string]*pipepb.Coder)
@@ -82,9 +84,10 @@ type typedNode[E Element] struct {
 	index      nodeIndex
 	parentEdge edgeIndex // for debugging
 
-	id        string
-	isBounded bool
-	coder     coders.Coder[E]
+	id             string
+	isBounded      bool
+	coder          coders.Coder[E]
+	windowStrategy *window.Strategy
 }
 
 func (n *typedNode[E]) initCoder(cid string, cs map[string]*pipepb.Coder) {
@@ -103,8 +106,15 @@ func (n *typedNode[E]) bounded() bool {
 	return n.isBounded
 }
 
-func (n *typedNode[E]) windowingStrat() {
-	// TODO, add windowing strategies.
+func (n *typedNode[E]) windowingStrat() *window.Strategy {
+	if n.windowStrategy == nil {
+		return window.DefaultStrategy()
+	}
+	return n.windowStrategy
+}
+
+func (n *typedNode[E]) setWindowingStrat(ws *window.Strategy) {
+	n.windowStrategy = ws
 }
 
 // multiEdges represent transforms.
@@ -278,6 +288,13 @@ func (g *graph) build(ctx context.Context, dataCon harness.DataContext) ([]proce
 					addConsumers(procs[0], nodeID)
 					break
 				}
+			}
+		case windowIntor:
+			transform, dofn, procs := e.windowInto()
+			c.input.update(e.edgeID(), transform, dofn, procs, mets, dataCon.LoggerForTransform(c.edge.protoID()))
+			for _, nodeID := range e.outputs() {
+				addConsumers(procs[0], nodeID)
+				break
 			}
 			//	case *edgePlaceholder:
 			// Ignoring for a sec.

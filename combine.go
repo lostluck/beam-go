@@ -106,7 +106,11 @@ func (s *Scope) CombinePerKey[K Keys, A, I, O Element, AM AccumulatorMerger[A]](
 	edgeID := s.g.curEdgeIndex()
 	nodeID := s.g.curNodeIndex()
 	s.g.edges = append(s.g.edges, &edgeCombine{index: edgeID, input: input.globalIndex, output: nodeID, comb: &hiddenKeyedCombiner[K, A, I, O, AM]{Merger: comb.am}})
-	s.g.nodes = append(s.g.nodes, &typedNode[KV[K, O]]{index: nodeID, parentEdge: edgeID})
+	s.g.nodes = append(s.g.nodes, &typedNode[KV[K, O]]{
+		index:          nodeID,
+		parentEdge:     edgeID,
+		windowStrategy: s.g.nodes[input.globalIndex].windowingStrat(),
+	})
 	return PCol[KV[K, O]]{globalIndex: nodeID}
 }
 

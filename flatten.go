@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 // Flatten joins together multiple Emitters of the same type into a single Emitter for
@@ -35,8 +36,16 @@ func (s *Scope) Flatten[E Element](inputs ...PCol[E]) PCol[E] {
 		ins = append(ins, in)
 		s.g.consumers[in] = append(s.g.consumers[in], edgeID)
 	}
+	var ws *window.Strategy
+	if len(inputs) > 0 && inputs[0].globalIndex >= 0 && int(inputs[0].globalIndex) < len(s.g.nodes) && s.g.nodes[inputs[0].globalIndex] != nil {
+		ws = s.g.nodes[inputs[0].globalIndex].windowingStrat()
+	}
 	s.g.edges = append(s.g.edges, &edgeFlatten[E]{index: edgeID, ins: ins, output: nodeID})
-	s.g.nodes = append(s.g.nodes, &typedNode[E]{index: nodeID, parentEdge: edgeID})
+	s.g.nodes = append(s.g.nodes, &typedNode[E]{
+		index:          nodeID,
+		parentEdge:     edgeID,
+		windowStrategy: ws,
+	})
 
 	// We do all the expected connections here.
 	// Side inputs, are put on the side input at the DoFn creation time being passed in.
