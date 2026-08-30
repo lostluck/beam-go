@@ -30,7 +30,7 @@ func concat[E any](iters ...iter.Seq[E]) iter.Seq[E] {
 }
 
 func iterClosure[E Element](r harness.NextBuffer) iter.Seq[E] {
-	c := MakeCoder[E]()
+	c := coders.MakeCoder[E]()
 	return iterClosureWithCoder(c, r)
 }
 

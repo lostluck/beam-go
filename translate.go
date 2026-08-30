@@ -346,11 +346,28 @@ func putCoder(coders map[string]*pipepb.Coder, urn string, payload []byte, compo
 
 func addCoder[E any](intern map[string]string, coders map[string]*pipepb.Coder) string {
 	var t E
+	rt := reflect.TypeOf(t)
+	key := ""
+	if rt != nil {
+		if rt.Kind() == reflect.Pointer {
+			rt = rt.Elem()
+		}
+		key = rt.PkgPath() + "." + rt.Name()
+		if key != "." && key != "" {
+			if id, ok := intern[key]; ok {
+				return id
+			}
+		}
+	}
+
 	at := any(t)
 	if at, ok := at.(structuralCoder); ok {
-		return at.addCoder(intern, coders)
+		id := at.addCoder(intern, coders)
+		if key != "" && key != "." {
+			intern[key] = id
+		}
+		return id
 	}
-	rt := reflect.TypeOf(t)
 	return addCoderType(rt, intern, coders)
 }
 
@@ -358,26 +375,29 @@ func addCoderType(rt reflect.Type, intern map[string]string, coders map[string]*
 	if rt.Kind() == reflect.Pointer {
 		rt = rt.Elem()
 	}
-	if id, ok := intern[rt.PkgPath()+"."+rt.Name()]; ok {
+	key := rt.PkgPath() + "." + rt.Name()
+	if id, ok := intern[key]; ok {
 		return id
 	}
 
+	var id string
 	switch rt.Kind() {
 	case reflect.Slice:
 		if rt.Elem().Kind() == reflect.Uint8 {
-			return putCoder(coders, "beam:coder:bytes:v1", nil, nil)
+			id = putCoder(coders, "beam:coder:bytes:v1", nil, nil)
+		} else {
+			elemCoderID := addCoderType(rt.Elem(), intern, coders)
+			id = putCoder(coders, "beam:coder:iterable:v1", nil, []string{elemCoderID})
 		}
-		elemCoderID := addCoderType(rt.Elem(), intern, coders)
-		return putCoder(coders, "beam:coder:iterable:v1", nil, []string{elemCoderID})
 	case reflect.Bool:
-		return putCoder(coders, "beam:coder:bool:v1", nil, nil)
+		id = putCoder(coders, "beam:coder:bool:v1", nil, nil)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return putCoder(coders, "beam:coder:varint:v1", nil, nil)
+		id = putCoder(coders, "beam:coder:varint:v1", nil, nil)
 	case reflect.Float32, reflect.Float64:
-		return putCoder(coders, "beam:coder:double:v1", nil, nil)
+		id = putCoder(coders, "beam:coder:double:v1", nil, nil)
 	case reflect.String:
-		return putCoder(coders, "beam:coder:string_utf8:v1", nil, nil)
+		id = putCoder(coders, "beam:coder:string_utf8:v1", nil, nil)
 	case reflect.Struct:
 		return addRowCoder(rt, intern, coders)
 	default:
@@ -391,14 +411,8 @@ func addCoderType(rt reflect.Type, intern map[string]string, coders map[string]*
 		// urnNullableCoder            = "beam:coder:nullable:v1"
 		panic(fmt.Sprintf("unknown coder type: resolved %v", rt))
 	}
-
-	// TODO
-	// urnLengthPrefixCoder        = "beam:coder:length_prefix:v1"
-	// urnStateBackedIterableCoder = "beam:coder:state_backed_iterable:v1"
-	// urnWindowedValueCoder       = "beam:coder:windowed_value:v1"
-	// urnParamWindowedValueCoder  = "beam:coder:param_windowed_value:v1"
-	// urnTimerCoder               = "beam:coder:timer:v1"
-	// urnNullableCoder            = "beam:coder:nullable:v1"
+	intern[key] = id
+	return id
 }
 
 func (KV[K, V]) addCoder(intern map[string]string, coders map[string]*pipepb.Coder) string {
@@ -711,6 +725,21 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 			}
 			opt := beamopts.Struct{
 				Name: tid,
+			}
+
+			// Initialize side input coders from proto components
+			for name, global := range pt.GetInputs() {
+				fv := reflect.ValueOf(wrap.DoFn)
+				if fv.Kind() == reflect.Pointer {
+					fv = fv.Elem()
+				}
+				field := fv.FieldByName(name)
+				if field.IsValid() {
+					if si, ok := field.Addr().Interface().(sideIface); ok {
+						pcol := pbd.GetPcollections()[global]
+						si.initCoder(pbd.GetCoders(), pcol.GetCoderId())
+					}
+				}
 			}
 
 			newEdge := proc.produceDoFnEdge(tid, edgeID, wrap.DoFn, ins, outs, opt)

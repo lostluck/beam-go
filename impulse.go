@@ -28,8 +28,8 @@ func (s *Scope) Impulse() PCol[[]byte] {
 	edgeID := s.g.curEdgeIndex()
 	nodeID := s.g.curNodeIndex()
 	s.g.edges = append(s.g.edges, &edgeImpulse{index: edgeID, output: nodeID})
-	s.g.nodes = append(s.g.nodes, &typedNode[[]byte]{index: nodeID, parentEdge: edgeID})
-	return PCol[[]byte]{globalIndex: nodeID}
+	s.g.nodes = append(s.g.nodes, &typedNode[[]byte]{index: nodeID, parentEdge: edgeID, isBounded: true})
+	return PCol[[]byte]{valid: true, globalIndex: nodeID}
 }
 
 // edgeImpulse represents an Impulse transform.

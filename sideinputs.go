@@ -23,6 +23,7 @@ import (
 	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/internal/harness"
 	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
+	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"lostluck.dev/beam-go/window"
 )
 
@@ -41,16 +42,22 @@ type sideIface interface {
 	sideInput() nodeIndex
 	accessPatternUrn() string
 	initialize(ctx context.Context, dataCon harness.DataContext, url, sideID, transformID string)
+	initCoder(cs map[string]*pipepb.Coder, cid string)
 }
 
 type SideInputIter[E Element] struct {
 	sideInputCommon
 
+	coder          coders.Coder[E]
 	initIterReader func(w []byte) harness.NextBuffer
 }
 
 func (*SideInputIter[E]) accessPatternUrn() string {
 	return "beam:side_input:iterable:v1"
+}
+
+func (si *SideInputIter[E]) initCoder(cs map[string]*pipepb.Coder, cid string) {
+	si.coder = coderFromProto[E](cs, cid)
 }
 
 func (si *SideInputIter[E]) initialize(ctx context.Context, dataCon harness.DataContext, url, sideID, transformID string) {
@@ -100,6 +107,9 @@ var _ sideIface = &SideInputIter[int]{}
 
 func (si *SideInputIter[E]) All(ec ElmC) iter.Seq[E] {
 	r := si.initIterReader(encodeWindow(getActiveWindow(ec)))
+	if si.coder != nil {
+		return iterClosureWithCoder[E](si.coder, r)
+	}
 	return iterClosure[E](r)
 }
 
@@ -124,12 +134,21 @@ func AsSideIter[E Element](emt PCol[E]) SideInputIter[E] {
 type SideInputMap[K, V Element] struct {
 	sideInputCommon
 
+	kc coders.Coder[K]
+	vc coders.Coder[V]
+
 	initMapReader     func(w, k []byte) harness.NextBuffer
 	initMapKeysReader func(w []byte) harness.NextBuffer
 }
 
 func (*SideInputMap[K, V]) accessPatternUrn() string {
 	return "beam:side_input:multimap:v1"
+}
+
+func (si *SideInputMap[K, V]) initCoder(cs map[string]*pipepb.Coder, cid string) {
+	c := cs[cid]
+	si.kc = coderFromProto[K](cs, c.GetComponentCoderIds()[0])
+	si.vc = coderFromProto[V](cs, c.GetComponentCoderIds()[1])
 }
 
 func (si *SideInputMap[K, V]) initialize(ctx context.Context, dataCon harness.DataContext, url, sideID, transformID string) {
@@ -174,11 +193,16 @@ var _ sideIface = &SideInputMap[int, int]{}
 // Get looks up an iterator of values associated with the key.
 func (si *SideInputMap[K, V]) Get(ec ElmC, k K) iter.Seq[V] {
 	wData := encodeWindow(getActiveWindow(ec))
-	// TODO cache coders in the side inputs?
-	kc := MakeCoder[K]()
+	kc := si.kc
+	if kc == nil {
+		kc = coders.MakeCoder[K]()
+	}
 	encK := coders.NewEncoder()
 	kc.Encode(encK, k)
 	r := si.initMapReader(wData, encK.Data())
+	if si.vc != nil {
+		return iterClosureWithCoder[V](si.vc, r)
+	}
 	return iterClosure[V](r)
 }
 
@@ -186,6 +210,9 @@ func (si *SideInputMap[K, V]) Get(ec ElmC, k K) iter.Seq[V] {
 func (si *SideInputMap[K, V]) Keys(ec ElmC) iter.Seq[K] {
 	wData := encodeWindow(getActiveWindow(ec))
 	r := si.initMapKeysReader(wData)
+	if si.kc != nil {
+		return iterClosureWithCoder[K](si.kc, r)
+	}
 	return iterClosure[K](r)
 }
 
