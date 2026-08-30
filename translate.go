@@ -541,6 +541,7 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 
 	pcolParents := map[nodeIndex]edgeIndex{}
 	pcolToIndex := map[string]nodeIndex{}
+	indexToPCol := map[nodeIndex]string{}
 	for name := range pbd.GetPcollections() {
 		// Get placeholder nodes in the graph, and avoid reconstructing nodes multiple times.
 		// We can't create the final typedEdge here because we don't have the real element type,
@@ -548,6 +549,7 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 		id := nodeIndex(len(g.nodes))
 		g.nodes = append(g.nodes, nil)
 		pcolToIndex[name] = id
+		indexToPCol[id] = name
 	}
 
 	routeInputs := func(pt *pipepb.PTransform, edgeID edgeIndex) map[string]nodeIndex {
@@ -726,20 +728,57 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 		}
 	}
 
-placeholderLoop:
-	for _, edgeID := range placeholders {
-		// Placeholders are almost exclusively "single type" nodes
-		e := g.edges[edgeID].(*edgePlaceholder)
-		// Check the inputs and outputs for actual node types.
-		for _, nodeID := range e.inputs() {
-			g.edges[edgeID] = g.nodes[nodeID].newTypeMultiEdge(e, pbd.GetCoders())
-			continue placeholderLoop
+	for len(placeholders) > 0 {
+		var remaining []edgeIndex
+		progress := false
+		for _, edgeID := range placeholders {
+			e := g.edges[edgeID].(*edgePlaceholder)
+			resolved := false
+			for _, nodeID := range e.inputs() {
+				if g.nodes[nodeID] != nil {
+					edge := g.nodes[nodeID].newTypeMultiEdge(e, pbd.GetCoders())
+					g.edges[edgeID] = edge
+					for _, outID := range edge.outputs() {
+						if g.nodes[outID] == nil {
+							global := indexToPCol[outID]
+							pcol := pbd.GetPcollections()[global]
+							g.nodes[outID] = g.nodes[nodeID].cloneNode(global, outID, edgeID)
+							g.nodes[outID].initCoder(pcol.GetCoderId(), pbd.GetCoders())
+						}
+					}
+					resolved = true
+					progress = true
+					break
+				}
+			}
+			if resolved {
+				continue
+			}
+			for _, nodeID := range e.outputs() {
+				if g.nodes[nodeID] != nil {
+					edge := g.nodes[nodeID].newTypeMultiEdge(e, pbd.GetCoders())
+					g.edges[edgeID] = edge
+					for _, inID := range edge.inputs() {
+						if g.nodes[inID] == nil {
+							global := indexToPCol[inID]
+							pcol := pbd.GetPcollections()[global]
+							g.nodes[inID] = g.nodes[nodeID].cloneNode(global, inID, edgeID)
+							g.nodes[inID].initCoder(pcol.GetCoderId(), pbd.GetCoders())
+						}
+					}
+					resolved = true
+					progress = true
+					break
+				}
+			}
+			if !resolved {
+				remaining = append(remaining, edgeID)
+			}
 		}
-		for _, nodeID := range e.outputs() {
-			g.edges[edgeID] = g.nodes[nodeID].newTypeMultiEdge(e, pbd.GetCoders())
-			continue placeholderLoop
+		if !progress && len(remaining) > 0 {
+			panic(fmt.Sprintf("couldn't resolve remaining placeholder nodes: %+v", remaining))
 		}
-		panic(fmt.Sprintf("couldn't create placeholder node: %+v", e))
+		placeholders = remaining
 	}
 	return &g
 }

@@ -117,6 +117,99 @@ func TestDFC_WindowExplosion_Table(t *testing.T) {
 				{IsFirst: true, IsLast: false, Timing: coders.TimingEarly, Index: 0, NonSpeculativeIndex: -1},
 			},
 		},
+		{
+			name: "EarlyFiring_WithSpeculativeNegativeIndex",
+			inWindows: []window.BoundedWindow{
+				window.IntervalWindow{
+					Start: time.Unix(0, 0).UTC(),
+					End:   time.Unix(10, 0).UTC(),
+				},
+			},
+			inPane: coders.PaneInfo{
+				IsFirst:             true,
+				IsLast:              false,
+				Timing:              coders.TimingEarly,
+				Index:               0,
+				NonSpeculativeIndex: -1,
+			},
+			wantWindows: []window.IntervalWindow{
+				{
+					Start: time.Unix(0, 0).UTC(),
+					End:   time.Unix(10, 0).UTC(),
+				},
+			},
+			wantPanes: []coders.PaneInfo{
+				{
+					IsFirst:             true,
+					IsLast:              false,
+					Timing:              coders.TimingEarly,
+					Index:               0,
+					NonSpeculativeIndex: -1,
+				},
+			},
+		},
+		{
+			name: "OnTimeFiring_FinalPane",
+			inWindows: []window.BoundedWindow{
+				window.IntervalWindow{
+					Start: time.Unix(0, 0).UTC(),
+					End:   time.Unix(10, 0).UTC(),
+				},
+			},
+			inPane: coders.PaneInfo{
+				IsFirst:             false,
+				IsLast:              true,
+				Timing:              coders.TimingOnTime,
+				Index:               1,
+				NonSpeculativeIndex: 0,
+			},
+			wantWindows: []window.IntervalWindow{
+				{
+					Start: time.Unix(0, 0).UTC(),
+					End:   time.Unix(10, 0).UTC(),
+				},
+			},
+			wantPanes: []coders.PaneInfo{
+				{
+					IsFirst:             false,
+					IsLast:              true,
+					Timing:              coders.TimingOnTime,
+					Index:               1,
+					NonSpeculativeIndex: 0,
+				},
+			},
+		},
+		{
+			name: "LateFiring_AccumulatedIndex",
+			inWindows: []window.BoundedWindow{
+				window.IntervalWindow{
+					Start: time.Unix(0, 0).UTC(),
+					End:   time.Unix(10, 0).UTC(),
+				},
+			},
+			inPane: coders.PaneInfo{
+				IsFirst:             false,
+				IsLast:              false,
+				Timing:              coders.TimingLate,
+				Index:               2,
+				NonSpeculativeIndex: 1,
+			},
+			wantWindows: []window.IntervalWindow{
+				{
+					Start: time.Unix(0, 0).UTC(),
+					End:   time.Unix(10, 0).UTC(),
+				},
+			},
+			wantPanes: []coders.PaneInfo{
+				{
+					IsFirst:             false,
+					IsLast:              false,
+					Timing:              coders.TimingLate,
+					Index:               2,
+					NonSpeculativeIndex: 1,
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {

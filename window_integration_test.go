@@ -19,7 +19,9 @@ import (
 	"testing"
 	"time"
 
+	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/window"
+	"lostluck.dev/beam-go/window/trigger"
 )
 
 type TimestampedIntSourceFn struct {
@@ -283,3 +285,192 @@ func TestWindow_ObservePane_Pipeline(t *testing.T) {
 		t.Errorf("sink.Processed = %v, want %v", got, want)
 	}
 }
+
+type SpecificTimestampKVVal struct {
+	Offset time.Duration
+	Val    int
+}
+
+type SpecificTimestampKVValuesSourceFn struct {
+	Key    string
+	Values []SpecificTimestampKVVal
+	Output PCol[KV[string, int]]
+}
+
+func (fn *SpecificTimestampKVValuesSourceFn) ProcessBundle(dfc *DFC[[]byte]) error {
+	return dfc.Process(func(ec ElmC, _ []byte) error {
+		t0 := time.Unix(0, 0).UTC()
+		for _, item := range fn.Values {
+			subEC := ElmC{
+				elmContext: elmContext{
+					eventTime: t0.Add(item.Offset),
+					windows:   ec.windows,
+					window:    ec.window,
+					pane:      ec.pane,
+				},
+				pcollections: ec.pcollections,
+			}
+			fn.Output.Emit(subEC, KV[string, int]{Key: fn.Key, Value: item.Val})
+		}
+		return nil
+	})
+}
+
+type WindowedStateAccumDoFn struct {
+	Sum StateValue[int]
+	Out PCol[KV[string, int]]
+}
+
+func (fn *WindowedStateAccumDoFn) ProcessBundle(dfc *DFC[KV[string, int]]) error {
+	return dfc.Process(func(ec ElmC, kv KV[string, int]) error {
+		cur, _ := fn.Sum.Get(ec)
+		next := cur + kv.Value
+		fn.Sum.Set(ec, next)
+		fn.Out.Emit(ec, KV[string, int]{Key: kv.Key, Value: next})
+		return nil
+	})
+}
+
+type StateOutputValidatorFn struct {
+	Win1Sum10 CounterInt64
+	Win1Sum15 CounterInt64
+	Win2Sum20 CounterInt64
+	Win2Sum23 CounterInt64
+}
+
+func (fn *StateOutputValidatorFn) ProcessBundle(dfc *DFC[KV[string, int]]) error {
+	return dfc.Process(func(ec ElmC, kv KV[string, int]) error {
+		switch kv.Value {
+		case 10:
+			fn.Win1Sum10.Inc(dfc, 1)
+		case 15:
+			fn.Win1Sum15.Inc(dfc, 1)
+		case 20:
+			fn.Win2Sum20.Inc(dfc, 1)
+		case 23:
+			fn.Win2Sum23.Inc(dfc, 1)
+		}
+		return nil
+	})
+}
+
+func TestWindow_StatefulParDo_WindowPartitionedState_Pipeline(t *testing.T) {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
+		imp := s.Impulse()
+		// Emit 4 elements for key "k":
+		// Window 1 [0s, 10s): 0s val 10 (sum 10), 5s val 5 (sum 15)
+		// Window 2 [10s, 20s): 10s val 20 (sum 20), 15s val 3 (sum 23)
+		src := s.ParDo(imp, &SpecificTimestampKVValuesSourceFn{
+			Key: "k",
+			Values: []SpecificTimestampKVVal{
+				{Offset: 0, Val: 10},
+				{Offset: 5 * time.Second, Val: 5},
+				{Offset: 10 * time.Second, Val: 20},
+				{Offset: 15 * time.Second, Val: 3},
+			},
+		})
+		win := s.WindowInto(src.Output, window.FixedWindows(10*time.Second))
+		st := s.StatefulParDo(win, &WindowedStateAccumDoFn{})
+		s.ParDo(st.Out, &StateOutputValidatorFn{}, Name("validator"))
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Fatalf("pipeline failed: %v", err)
+	}
+
+	if got, want := int(pr.Counters["validator.Win1Sum10"]), 1; got != want {
+		t.Errorf("validator.Win1Sum10 = %v, want %v", got, want)
+	}
+	if got, want := int(pr.Counters["validator.Win1Sum15"]), 1; got != want {
+		t.Errorf("validator.Win1Sum15 = %v, want %v", got, want)
+	}
+	if got, want := int(pr.Counters["validator.Win2Sum20"]), 1; got != want {
+		t.Errorf("validator.Win2Sum20 = %v, want %v", got, want)
+	}
+	if got, want := int(pr.Counters["validator.Win2Sum23"]), 1; got != want {
+		t.Errorf("validator.Win2Sum23 = %v, want %v", got, want)
+	}
+}
+
+type DetailedPaneInspectorFn struct {
+	Pane ObservePane
+
+	EarlyCount   CounterInt64
+	OnTimeCount  CounterInt64
+	LateCount    CounterInt64
+	UnknownCount CounterInt64
+	FirstCount   CounterInt64
+	LastCount    CounterInt64
+
+	Out PCol[int]
+}
+
+func (fn *DetailedPaneInspectorFn) ProcessBundle(dfc *DFC[int]) error {
+	return dfc.Process(func(ec ElmC, elm int) error {
+		p := fn.Pane.Of(ec)
+		switch p.Timing {
+		case coders.TimingEarly:
+			fn.EarlyCount.Inc(dfc, 1)
+		case coders.TimingOnTime:
+			fn.OnTimeCount.Inc(dfc, 1)
+		case coders.TimingLate:
+			fn.LateCount.Inc(dfc, 1)
+		case coders.TimingUnknown:
+			fn.UnknownCount.Inc(dfc, 1)
+		}
+		if p.IsFirst {
+			fn.FirstCount.Inc(dfc, 1)
+		}
+		if p.IsLast {
+			fn.LastCount.Inc(dfc, 1)
+		}
+		fn.Out.Emit(ec, elm)
+		return nil
+	})
+}
+
+func TestWindow_TriggerDSL_EarlyLateFirings_Pipeline(t *testing.T) {
+	pr, err := LaunchAndWait(t.Context(), func(s *Scope) error {
+		imp := s.Impulse()
+		src := s.ParDo(imp, &TimestampedIntSourceFn{Count: 6, Step: 2 * time.Second})
+		win := s.WindowInto(src.Output,
+			window.FixedWindows(10*time.Second),
+			window.Trigger(
+				trigger.AfterWatermark().
+					WithEarlyFirings(trigger.AfterCount(2)).
+					WithLateFirings(trigger.AfterCount(1)),
+			),
+			window.Accumulating(),
+			window.AllowedLateness(1*time.Minute),
+		)
+		ins := s.ParDo(win, &DetailedPaneInspectorFn{}, Name("paneInspector"))
+		namedDiscard(s, ins.Out, "sink")
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Fatalf("pipeline failed: %v", err)
+	}
+
+	if got, want := int(pr.Counters["paneInspector.UnknownCount"]), 6; got != want {
+		t.Errorf("paneInspector.UnknownCount = %v, want %v", got, want)
+	}
+	if got, want := int(pr.Counters["paneInspector.OnTimeCount"]), 0; got != want {
+		t.Errorf("paneInspector.OnTimeCount = %v, want %v", got, want)
+	}
+	if got, want := int(pr.Counters["paneInspector.EarlyCount"]), 0; got != want {
+		t.Errorf("paneInspector.EarlyCount = %v, want %v", got, want)
+	}
+	if got, want := int(pr.Counters["paneInspector.LateCount"]), 0; got != want {
+		t.Errorf("paneInspector.LateCount = %v, want %v", got, want)
+	}
+	if got, want := int(pr.Counters["paneInspector.FirstCount"]), 6; got != want {
+		t.Errorf("paneInspector.FirstCount = %v, want %v", got, want)
+	}
+	if got, want := int(pr.Counters["paneInspector.LastCount"]), 6; got != want {
+		t.Errorf("paneInspector.LastCount = %v, want %v", got, want)
+	}
+	if got, want := int(pr.Counters["sink.Processed"]), 6; got != want {
+		t.Errorf("sink.Processed = %v, want %v", got, want)
+	}
+}
+

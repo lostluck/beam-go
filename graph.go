@@ -74,6 +74,7 @@ type node interface {
 	setWindowingStrat(*window.Strategy)
 	addCoder(intern map[string]string, coders map[string]*pipepb.Coder) string
 	newTypeMultiEdge(*edgePlaceholder, map[string]*pipepb.Coder) multiEdge
+	cloneNode(id string, index nodeIndex, parent edgeIndex) node
 	initCoder(cid string, cs map[string]*pipepb.Coder)
 	getCoder() any
 }
@@ -88,6 +89,17 @@ type typedNode[E Element] struct {
 	isBounded      bool
 	coder          coders.Coder[E]
 	windowStrategy *window.Strategy
+}
+
+func (n *typedNode[E]) cloneNode(id string, index nodeIndex, parent edgeIndex) node {
+	return &typedNode[E]{
+		index:          index,
+		parentEdge:     parent,
+		id:             id,
+		isBounded:      n.isBounded,
+		coder:          n.coder,
+		windowStrategy: n.windowStrategy,
+	}
 }
 
 func (n *typedNode[E]) initCoder(cid string, cs map[string]*pipepb.Coder) {
