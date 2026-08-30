@@ -18,6 +18,7 @@ package beam
 import (
 	"lostluck.dev/beam-go/coders"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 // coderFromProto bridges the gap between the Go type, and the
@@ -143,4 +144,72 @@ func (c *lpCoder[E]) Decode(dec *coders.Decoder) E {
 	// followed by that many bytes.
 	inner := coders.NewDecoder(dec.Bytes())
 	return c.Coder.Decode(inner)
+}
+
+type windowCoder interface {
+	Encode(enc *coders.Encoder, w window.BoundedWindow)
+	Decode(dec *coders.Decoder) window.BoundedWindow
+}
+
+type globalWindowCoderWrapper struct{}
+
+func (globalWindowCoderWrapper) Encode(enc *coders.Encoder, w window.BoundedWindow) {
+	enc.GlobalWindow()
+}
+
+func (globalWindowCoderWrapper) Decode(dec *coders.Decoder) window.BoundedWindow {
+	dec.GlobalWindow()
+	return window.GlobalWindow{}
+}
+
+type intervalWindowCoderWrapper struct{}
+
+func (intervalWindowCoderWrapper) Encode(enc *coders.Encoder, w window.BoundedWindow) {
+	if iw, ok := w.(window.IntervalWindow); ok {
+		enc.IntervalWindow(iw.End, iw.Duration())
+	} else {
+		enc.GlobalWindow()
+	}
+}
+
+func (intervalWindowCoderWrapper) Decode(dec *coders.Decoder) window.BoundedWindow {
+	end, dur := dec.IntervalWindow()
+	return window.IntervalWindow{
+		Start: end.Add(-dur),
+		End:   end,
+	}
+}
+
+func windowCoderFromProto(cs map[string]*pipepb.Coder, cid string) windowCoder {
+	c, ok := cs[cid]
+	if ok {
+		switch c.GetSpec().GetUrn() {
+		case "beam:coder:length_prefix:v1":
+			if len(c.GetComponentCoderIds()) > 0 {
+				return windowCoderFromProto(cs, c.GetComponentCoderIds()[0])
+			}
+		case "beam:coder:global_window:v1":
+			return globalWindowCoderWrapper{}
+		case "beam:coder:interval_window:v1":
+			return intervalWindowCoderWrapper{}
+		}
+	}
+	return globalWindowCoderWrapper{}
+}
+
+func extractWindowCoderFromWV(cs map[string]*pipepb.Coder, cid string) windowCoder {
+	c, ok := cs[cid]
+	if ok {
+		switch c.GetSpec().GetUrn() {
+		case "beam:coder:length_prefix:v1":
+			if len(c.GetComponentCoderIds()) > 0 {
+				return extractWindowCoderFromWV(cs, c.GetComponentCoderIds()[0])
+			}
+		case "beam:coder:windowed_value:v1":
+			if len(c.GetComponentCoderIds()) > 1 {
+				return windowCoderFromProto(cs, c.GetComponentCoderIds()[1])
+			}
+		}
+	}
+	return globalWindowCoderWrapper{}
 }

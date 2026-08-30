@@ -19,12 +19,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/internal/beamopts"
 	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 // DFC or the DoFn Context is the local registry and router for Beam
@@ -47,8 +49,9 @@ type DFC[E Element] struct {
 	transform string
 	edgeID    edgeIndex
 
-	dofn       Transform[E]
-	downstream []processor
+	dofn            Transform[E]
+	downstream      []processor
+	observesWindows bool
 
 	perElm                     Process[E] // Handles normal per element processing for ProcessBundle
 	makeTracker, perElmAndRest any        // Handles SDF tracker creation and the user iteration.
@@ -65,7 +68,8 @@ func (c *DFC[E]) transformID() string {
 
 type elmContext struct {
 	eventTime time.Time
-	windows   []coders.GWC
+	windows   []window.BoundedWindow
+	window    window.BoundedWindow
 	pane      coders.PaneInfo
 
 	// For stateful transforms.
@@ -133,13 +137,51 @@ func (c *DFC[E]) metricsStore() *metricsStore {
 //
 // This derives the element windows, and sets a no-firing pane.
 func (c *DFC[E]) ToElmC(eventTime time.Time) ElmC {
+	// TODO: correctly derive windows, instaed of flat using the global window.
 	return ElmC{
-		elmContext: elmContext{
-			eventTime: eventTime,
-			// TODO windows, pane
-		},
+		eventTime:    eventTime,
+		windows:      []window.BoundedWindow{window.GlobalWindow{}},
+		window:       window.GlobalWindow{},
+		pane:         coders.NoFiringPane,
 		pcollections: c.downstream,
 	}
+}
+
+// processElement handles element processing and conditional window explosion for the DoFn.
+func (c *DFC[E]) processElement(ec ElmC, elm E) error {
+	// Only explode windows if the DoFn statically observes the window or its properties (or state/timers).
+	if c.observesWindows && len(ec.windows) > 1 {
+		for _, w := range ec.windows {
+			subEC := ElmC{
+				elmContext: elmContext{
+					eventTime: ec.eventTime,
+					windows:   []window.BoundedWindow{w},
+					window:    w,
+					pane:      ec.pane,
+					keyBytes:  ec.keyBytes,
+					winBytes:  ec.winBytes,
+				},
+				pcollections: c.downstream,
+			}
+			if err := c.perElm(subEC, elm); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	var activeWin window.BoundedWindow
+	if len(ec.windows) == 1 {
+		activeWin = ec.windows[0]
+	} else if ec.window != nil {
+		activeWin = ec.window
+	} else if len(ec.windows) == 0 {
+		activeWin = window.GlobalWindow{}
+		ec.windows = []window.BoundedWindow{activeWin}
+	}
+	ec.window = activeWin
+	ec.pcollections = c.downstream
+	return c.perElm(ec, elm)
 }
 
 // processor allows a uniform type for different generic types.
@@ -183,6 +225,51 @@ func (c *DFC[E]) update(edgeID edgeIndex, transform string, dofn any, procs []pr
 	c.downstream = procs
 	c.metrics = mets
 	c.logger = logger
+	c.observesWindows = checkObservesWindows(dofn)
+}
+
+func checkObservesWindows(dofn any) bool {
+	if dofn == nil {
+		return false
+	}
+	if _, ok := dofn.(windowObserver); ok {
+		return true
+	}
+	if _, ok := dofn.(stateful); ok {
+		return true
+	}
+	if sdf, ok := dofn.(procSizedElmAndRestIface); ok {
+		dofn = sdf.getUserTransform()
+	}
+	rv := reflect.ValueOf(dofn)
+	if rv.Kind() == reflect.Pointer {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return false
+	}
+	rt := rv.Type()
+	for i := 0; i < rv.NumField(); i++ {
+		sf := rt.Field(i)
+		if !sf.IsExported() {
+			continue
+		}
+		fv := rv.Field(i)
+		if fv.CanAddr() {
+			if _, ok := fv.Addr().Interface().(windowObserver); ok {
+				return true
+			}
+			if _, ok := fv.Addr().Interface().(stateIface); ok {
+				return true
+			}
+		}
+		if fv.CanInterface() {
+			if _, ok := fv.Interface().(windowObserver); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *DFC[E]) discard() {

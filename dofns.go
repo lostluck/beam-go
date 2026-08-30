@@ -22,6 +22,7 @@ import (
 
 	"lostluck.dev/beam-go/coders"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 // dofns.go is about the different mix-ins and addons that can be added.
@@ -110,11 +111,12 @@ func (emt *PCol[E]) Emit(ec ElmC, elm E) {
 			emt.mets.Sample(int64(len(enc.Data())))
 		}
 	}
-	// Metrics collected, call the downstream function directly to avoid another function layer.
+	// Metrics collected, call the downstream processElement function to handle window explosion.
+	// // TODO investigate if we can avoid the extra function layer.
 	proc := ec.pcollections[emt.localDownstreamIndex]
 	dfc := proc.(*DFC[E])
 	dfc.metrics.setState(1, dfc.edgeID) // Set current sampling state.
-	if err := dfc.perElm(ElmC{ec.elmContext, dfc.downstream}, elm); err != nil {
+	if err := dfc.processElement(ElmC{ec.elmContext, dfc.downstream}, elm); err != nil {
 		panic(fmt.Errorf("doFn id %v %T failed: %w", dfc.id, dfc.dofn, err))
 	}
 }
@@ -137,29 +139,52 @@ func (*OnBundleFinish) Do(dfc bundleFinisher, finishBundle func() error) {
 	dfc.regBundleFinisher(finishBundle)
 }
 
-////////////////////////////////////////////////////////
-// Below here are Not Yet Implemented field flavours. //
-////////////////////////////////////////////////////////
-
-// TODO is a marker indicating that a better type should go here at some point
-// but it's not yet implemented.
-type TODO any
+// windowObserver is implemented by DoFn fields or transforms that explicitly observe the window or pane.
+type windowObserver interface {
+	observesWindow()
+}
 
 // ObserveWindow indicates this DoFn needs to be aware of windows explicitly.
 // Required to use as a field, but may be embedded for legibility.
 //
-// DoFns that observe windows must process the element for each window individually.
-// If ObserveWindow isn't being used, remove it to possibly improve performance.
-type ObserveWindow struct{}
-
-// Of returns the window for this element.
-func (*ObserveWindow) Of(ec ElmC) TODO { // TODO make this a concrete window type.
-	// When windows are observable, only a single window is present.
-	return ec.windows[0]
+// When ObserveWindow is used, elements are processed per window (window explosion).
+type ObserveWindow[W window.BoundedWindow] struct {
+	beamMixin
 }
 
-// PaneOf returns the window for this element.
-func (*ObserveWindow) PaneOf(ec ElmC) TODO { // TODO make this a concrete pane type.
+func (ObserveWindow[W]) observesWindow() {}
+
+// Of returns the window for this element.
+func (*ObserveWindow[W]) Of(ec ElmC) W {
+	var win window.BoundedWindow
+	if ec.window != nil {
+		win = ec.window
+	} else if len(ec.windows) > 0 {
+		win = ec.windows[0]
+	} else {
+		win = window.GlobalWindow{}
+	}
+	if typedWin, ok := win.(W); ok {
+		return typedWin
+	}
+	var zero W
+	return zero
+}
+
+// PaneOf returns the pane for this element.
+func (*ObserveWindow[W]) PaneOf(ec ElmC) coders.PaneInfo {
+	return ec.pane
+}
+
+// ObservePane allows observing pane metadata for an element.
+type ObservePane struct {
+	beamMixin
+}
+
+func (ObservePane) observesWindow() {}
+
+// Of returns the pane metadata for this element.
+func (*ObservePane) Of(ec ElmC) coders.PaneInfo {
 	return ec.pane
 }
 

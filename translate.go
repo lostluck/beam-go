@@ -761,18 +761,28 @@ func (c *typedNode[E]) newTypeMultiEdge(ph *edgePlaceholder, cs map[string]*pipe
 			panic(err)
 		}
 		out := getSingleValue(ph.outs)
-		// TODO, extract windowed value coder for header
-		return &edgeDataSource[E]{index: ph.index, transform: ph.transform, output: out, port: port,
-			makeCoder: func() coders.Coder[E] { return coderFromProto[E](cs, cid) }}
+		return &edgeDataSource[E]{
+			index:       ph.index,
+			transform:   ph.transform,
+			output:      out,
+			port:        port,
+			makeCoder:   func() coders.Coder[E] { return coderFromProto[E](cs, cid) },
+			windowCoder: extractWindowCoderFromWV(cs, cid),
+		}
 	case "sink":
 		port, cid, err := decodePort(ph.payload)
 		if err != nil {
 			panic(err)
 		}
 		in := getSingleValue(ph.ins)
-		// TODO, extract windowed value coder for header
-		return &edgeDataSink[E]{index: ph.index, transform: ph.transform, input: in, port: port,
-			makeCoder: func() coders.Coder[E] { return coderFromProto[E](cs, cid) }}
+		return &edgeDataSink[E]{
+			index:       ph.index,
+			transform:   ph.transform,
+			input:       in,
+			port:        port,
+			makeCoder:   func() coders.Coder[E] { return coderFromProto[E](cs, cid) },
+			windowCoder: extractWindowCoderFromWV(cs, cid),
+		}
 	default:
 		panic(fmt.Sprintf("unknown placeholder kind: %v", ph.kind))
 	}

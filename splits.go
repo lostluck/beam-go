@@ -376,9 +376,9 @@ func (fn *processSizedElementAndRestriction[FAC, O, T, R, P, WES]) splitElementS
 		resiBuffer := coders.NewEncoder()
 
 		// This needs to be the fullly qualified WindowedValueElement with the new restriction and size.
-		// TODO get the real window/pane here. Better event time plumbing.
-		coders.EncodeWindowedValueHeader(primBuffer, ec.EventTime(), []coders.GWC{{}}, coders.PaneInfo{})
-		coders.EncodeWindowedValueHeader(resiBuffer, ec.EventTime(), []coders.GWC{{}}, coders.PaneInfo{})
+		// TODO get the real window here. Better event time plumbing.
+		coders.EncodeWindowedValueHeader(primBuffer, ec.EventTime(), []coders.GWC{{}}, ec.pane)
+		coders.EncodeWindowedValueHeader(resiBuffer, ec.EventTime(), []coders.GWC{{}}, ec.pane)
 
 		primSize := wrapped.Size(prim)
 		resiSize := wrapped.Size(resi)

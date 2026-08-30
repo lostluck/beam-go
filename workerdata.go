@@ -18,6 +18,7 @@ package beam
 import (
 	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/internal/harness"
+	"lostluck.dev/beam-go/window"
 )
 
 // This file contains the data source and datasink Transforms
@@ -29,8 +30,9 @@ type edgeDataSource[E Element] struct {
 	index     edgeIndex
 	transform string
 
-	port      harness.Port
-	makeCoder func() coders.Coder[E]
+	port        harness.Port
+	makeCoder   func() coders.Coder[E]
+	windowCoder windowCoder
 
 	output nodeIndex
 }
@@ -59,6 +61,11 @@ func (e *edgeDataSource[E]) source(dc harness.DataContext, mets *metricsStore) (
 	toConsumer := &DFC[E]{id: e.output}
 	toConsumer.metrics = mets
 
+	wCoder := e.windowCoder
+	if wCoder == nil {
+		wCoder = globalWindowCoderWrapper{}
+	}
+
 	// Just kick it off with an impulse.
 	root := &DFC[[]byte]{
 		id:         e.output,
@@ -66,10 +73,11 @@ func (e *edgeDataSource[E]) source(dc harness.DataContext, mets *metricsStore) (
 		transform:  e.transform,
 		metrics:    mets,
 		dofn: &datasource[E]{
-			DC:     dc,
-			SID:    harness.StreamID{PtransformID: e.transform, Port: e.port},
-			Output: PCol[E]{valid: true, globalIndex: e.output, localDownstreamIndex: 0},
-			Coder:  e.makeCoder(),
+			DC:          dc,
+			SID:         harness.StreamID{PtransformID: e.transform, Port: e.port},
+			Output:      PCol[E]{valid: true, globalIndex: e.output, localDownstreamIndex: 0},
+			Coder:       e.makeCoder(),
+			WindowCoder: wCoder,
 			dc: &dataChannelIndex{
 				transform: e.transform,
 				index:     0,
@@ -96,7 +104,8 @@ type datasource[E Element] struct {
 	SID harness.StreamID
 
 	// Window Coder to produce windows
-	Coder coders.Coder[E]
+	Coder       coders.Coder[E]
+	WindowCoder windowCoder
 
 	Output PCol[E]
 
@@ -124,6 +133,11 @@ func (fn *datasource[E]) ProcessBundle(dfc *DFC[[]byte]) error {
 		fn.dc.mu.Unlock()
 	}
 
+	wCoder := fn.WindowCoder
+	if wCoder == nil {
+		wCoder = globalWindowCoderWrapper{}
+	}
+
 	// TODO outputing to timers callbacks
 	return dfc.Process(func(ec ElmC, _ []byte) error {
 	dataChan:
@@ -131,7 +145,14 @@ func (fn *datasource[E]) ProcessBundle(dfc *DFC[[]byte]) error {
 			// Start reading byte blobs.
 			dec := coders.NewDecoder(dataElm.Data)
 			for !dec.Empty() {
-				et, ws, pn := coders.DecodeWindowedValueHeader[coders.GWC](dec)
+				// 	et, ws, pn := coders.DecodeWindowedValueHeader[coders.GWC](dec)  // TODO instead?
+				et := dec.Timestamp()
+				numWindows := dec.Uint32()
+				ws := make([]window.BoundedWindow, numWindows)
+				for i := range ws {
+					ws[i] = wCoder.Decode(dec)
+				}
+				pn := dec.Pane()
 				elm := fn.Coder.Decode(dec)
 				fn.Output.Emit(ElmC{
 					eventTime:    et,
@@ -165,8 +186,9 @@ type edgeDataSink[E Element] struct {
 	index     edgeIndex
 	transform string
 
-	port      harness.Port
-	makeCoder func() coders.Coder[E]
+	port        harness.Port
+	makeCoder   func() coders.Coder[E]
+	windowCoder windowCoder
 
 	input nodeIndex
 }
@@ -198,9 +220,15 @@ type sinker interface {
 }
 
 func (e *edgeDataSink[E]) sinkDoFn(dc harness.DataContext) any {
-	return &datasink[E]{DC: dc,
-		SID:   harness.StreamID{PtransformID: e.transform, Port: e.port},
-		Coder: e.makeCoder(),
+	wCoder := e.windowCoder
+	if wCoder == nil {
+		wCoder = globalWindowCoderWrapper{}
+	}
+	return &datasink[E]{
+		DC:          dc,
+		SID:         harness.StreamID{PtransformID: e.transform, Port: e.port},
+		Coder:       e.makeCoder(),
+		WindowCoder: wCoder,
 	}
 }
 
@@ -210,7 +238,8 @@ type datasink[E Element] struct {
 	SID harness.StreamID
 
 	// Window Coder to produce windows
-	Coder coders.Coder[E]
+	Coder       coders.Coder[E]
+	WindowCoder windowCoder
 
 	OnBundleFinish
 }
@@ -221,11 +250,29 @@ func (fn *datasink[E]) ProcessBundle(dfc *DFC[E]) error {
 		return err
 	}
 
+	wCoder := fn.WindowCoder
+	if wCoder == nil {
+		wCoder = globalWindowCoderWrapper{}
+	}
+
 	enc := coders.NewEncoder()
 	// TODO outputing to timers callbacks
 	if err := dfc.Process(func(ec ElmC, elm E) error {
 		enc.Reset(100)
-		coders.EncodeWindowedValueHeader(enc, ec.EventTime(), []coders.GWC{{}}, coders.PaneInfo{})
+		enc.Timestamp(ec.EventTime())
+		ws := ec.windows
+		if len(ws) == 0 {
+			if ec.window != nil {
+				ws = []window.BoundedWindow{ec.window}
+			} else {
+				ws = []window.BoundedWindow{window.GlobalWindow{}}
+			}
+		}
+		enc.Uint32(uint32(len(ws)))
+		for _, w := range ws {
+			wCoder.Encode(enc, w)
+		}
+		enc.Pane(ec.pane)
 
 		fn.Coder.Encode(enc, elm)
 		if _, err := wc.Write(enc.Data()); err != nil {

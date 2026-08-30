@@ -23,6 +23,7 @@ import (
 	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/internal/harness"
 	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 type sideInputCommon struct {
@@ -72,13 +73,33 @@ func (si *SideInputIter[E]) initialize(ctx context.Context, dataCon harness.Data
 	}
 }
 
+func encodeWindow(w window.BoundedWindow) []byte {
+	enc := coders.NewEncoder()
+	switch win := w.(type) {
+	case window.GlobalWindow:
+		enc.GlobalWindow()
+	case window.IntervalWindow:
+		enc.IntervalWindow(win.End, win.Duration())
+	default:
+		enc.GlobalWindow()
+	}
+	return enc.Data()
+}
+
+func getActiveWindow(ec ElmC) window.BoundedWindow {
+	if ec.window != nil {
+		return ec.window
+	}
+	if len(ec.windows) > 0 {
+		return ec.windows[0]
+	}
+	return window.GlobalWindow{}
+}
+
 var _ sideIface = &SideInputIter[int]{}
 
 func (si *SideInputIter[E]) All(ec ElmC) iter.Seq[E] {
-	enc := coders.NewEncoder()
-	w := ec.windows[0]
-	w.Encode(enc)
-	r := si.initIterReader(enc.Data())
+	r := si.initIterReader(encodeWindow(getActiveWindow(ec)))
 	return iterClosure[E](r)
 }
 
@@ -152,24 +173,19 @@ var _ sideIface = &SideInputMap[int, int]{}
 
 // Get looks up an iterator of values associated with the key.
 func (si *SideInputMap[K, V]) Get(ec ElmC, k K) iter.Seq[V] {
-	w := ec.windows[0]
-	encW := coders.NewEncoder()
-	w.Encode(encW)
-
+	wData := encodeWindow(getActiveWindow(ec))
 	// TODO cache coders in the side inputs?
 	kc := MakeCoder[K]()
 	encK := coders.NewEncoder()
 	kc.Encode(encK, k)
-	r := si.initMapReader(encW.Data(), encK.Data())
+	r := si.initMapReader(wData, encK.Data())
 	return iterClosure[V](r)
 }
 
-// Get looks up an iterator of values associated with the key.
+// Keys looks up an iterator of keys available in the side input.
 func (si *SideInputMap[K, V]) Keys(ec ElmC) iter.Seq[K] {
-	w := ec.windows[0]
-	encW := coders.NewEncoder()
-	w.Encode(encW)
-	r := si.initMapKeysReader(encW.Data())
+	wData := encodeWindow(getActiveWindow(ec))
+	r := si.initMapKeysReader(wData)
 	return iterClosure[K](r)
 }
 

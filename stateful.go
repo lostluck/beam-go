@@ -9,6 +9,7 @@ import (
 	"lostluck.dev/beam-go/internal/beamopts"
 	"lostluck.dev/beam-go/internal/harness"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 // This is where we're having the graph construction logic for Stateful DoFns.
@@ -168,7 +169,7 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 
 	// TODO: replace with a transaction handling per key/window.
 	memoKeys := map[K]string{}
-	memoWins := map[coders.GWC]string{}
+	memoWins := map[window.BoundedWindow]string{}
 
 	// Each state needs to keep it's own cache of key+window to values.
 
@@ -181,17 +182,25 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 			memoKeys[e.Key] = kb
 		}
 
-		win := coders.GWC{}
-		if len(ec.windows) == 1 {
-			win = ec.windows[0]
-		} else if len(ec.windows) > 1 {
-			panic("multiple windows, in single window context")
+		win := ec.window
+		if win == nil {
+			if len(ec.windows) > 0 {
+				win = ec.windows[0]
+			} else {
+				win = window.GlobalWindow{}
+			}
 		}
-
 		wb, exists := memoWins[win]
 		if !exists {
 			enc := coders.NewEncoder()
-			win.Encode(enc)
+			switch w := win.(type) {
+			case window.GlobalWindow:
+				enc.GlobalWindow()
+			case window.IntervalWindow:
+				enc.IntervalWindow(w.End, w.Duration())
+			default:
+				enc.GlobalWindow()
+			}
 			wb = string(enc.Data())
 			memoWins[win] = wb
 		}

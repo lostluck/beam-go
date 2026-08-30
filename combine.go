@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"lostluck.dev/beam-go/coders"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
+	"lostluck.dev/beam-go/window"
 )
 
 // Design Goals:
@@ -194,7 +195,7 @@ type liftedAddingCombine[K Keys, I, A Element] struct {
 	// TODO implement and use WindowObserver
 	Output PCol[KV[K, A]]
 	OnBundleFinish
-	ObserveWindow
+	ObserveWindow[window.BoundedWindow]
 }
 
 func (fn *liftedAddingCombine[K, I, A]) ProcessBundle(dfc *DFC[KV[K, I]]) error {
@@ -265,7 +266,7 @@ type liftedMergedCombine[K Keys, A Element] struct {
 	// TODO implement and use WindowObserver
 	Output PCol[KV[K, A]]
 	OnBundleFinish
-	ObserveWindow
+	ObserveWindow[window.BoundedWindow]
 }
 
 func (fn *liftedMergedCombine[K, A]) ProcessBundle(dfc *DFC[KV[K, A]]) error {

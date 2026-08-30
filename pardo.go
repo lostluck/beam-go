@@ -38,7 +38,17 @@ func (s *Scope) ParDo[E Element, DF Transform[E]](input PCol[E], dofn DF, opts .
 	edgeID := s.g.curEdgeIndex()
 	ins, outs, sides, extras := s.g.deferDoFn(dofn, input.globalIndex, edgeID)
 
-	s.g.edges = append(s.g.edges, &edgeDoFn[E]{index: edgeID, dofn: dofn, ins: ins, outs: outs, sides: sides, parallelIn: input.globalIndex, opts: opt, sdf: extras.SDF()})
+	s.g.edges = append(s.g.edges, &edgeDoFn[E]{
+		index:          edgeID,
+		dofn:           dofn,
+		ins:            ins,
+		outs:           outs,
+		sides:          sides,
+		parallelIn:     input.globalIndex,
+		opts:           opt,
+		sdf:            extras.SDF(),
+		observesWindow: extras.ObservesWindow(),
+	})
 
 	return dofn
 }
@@ -103,6 +113,11 @@ func (g *graph) deferDoFn(dofn any, input nodeIndex, global edgeIndex) (ins, out
 					extras.states = map[string]stateIface{}
 				}
 				extras.states[sf.Name] = feature
+			case windowObserver:
+				if extras == nil {
+					extras = &dofnExtras{}
+				}
+				extras.observesWindow = true
 			}
 		case reflect.Chan:
 			panic(fmt.Sprintf("field %v is a channel", fv))
@@ -115,8 +130,9 @@ func (g *graph) deferDoFn(dofn any, input nodeIndex, global edgeIndex) (ins, out
 }
 
 type dofnExtras struct {
-	sdf    sdfHandler
-	states map[string]stateIface
+	sdf            sdfHandler
+	states         map[string]stateIface
+	observesWindow bool
 }
 
 func (x *dofnExtras) SDF() sdfHandler {
@@ -124,6 +140,13 @@ func (x *dofnExtras) SDF() sdfHandler {
 		return nil
 	}
 	return x.sdf
+}
+
+func (x *dofnExtras) ObservesWindow() bool {
+	if x == nil {
+		return false
+	}
+	return x.observesWindow || len(x.states) > 0
 }
 
 func (g *graph) initEmitter(emt emitIface, global edgeIndex, input nodeIndex, name string, outs map[string]nodeIndex) {
@@ -153,8 +176,9 @@ type edgeDoFn[E Element] struct {
 	ins, outs  map[string]nodeIndex  // local field names to global collection ids.
 	sides      map[string]string     // local id to side input access pattern URN
 	states     map[string]stateIface // local id to state access pattern URN, this edgeDoFn must be wrapped with edgeKeyedDoFn.
-	parallelIn nodeIndex
-	sdf        sdfHandler
+	parallelIn     nodeIndex
+	sdf            sdfHandler
+	observesWindow bool
 
 	opts beamopts.Struct
 }
