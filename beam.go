@@ -25,9 +25,7 @@ import (
 	"os"
 	"reflect"
 	"runtime/debug"
-	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-json-experiment/json"
@@ -592,7 +590,6 @@ func extractEnv(ctx context.Context, ef *envFlags, typeReg map[string]reflect.Ty
 }
 
 func executeSubgraph(typeReg map[string]reflect.Type, edgeMeta map[string]any) harness.ExecFunc {
-	var shortID atomic.Uint32
 	return func(ctx context.Context, ctrl *harness.Control, dataCon harness.DataContext) (_ *fnpb.ProcessBundleResponse, err error) {
 		defer func() {
 			if e := recover(); e != nil && err == nil {
@@ -621,7 +618,18 @@ func executeSubgraph(typeReg map[string]reflect.Type, edgeMeta map[string]any) h
 			pylds := map[string][]byte{}
 			labels := map[string]*pipepb.MonitoringInfo{}
 			for _, mon := range mons {
-				key := strconv.FormatInt(int64(shortID.Add(1)), 36)
+				var keyParts []string
+				if pt, ok := mon.Labels["PTRANSFORM"]; ok && pt != "" {
+					keyParts = append(keyParts, pt)
+				}
+				if pc, ok := mon.Labels["PCOLLECTION"]; ok && pc != "" {
+					keyParts = append(keyParts, pc)
+				}
+				if name, ok := mon.Labels["NAME"]; ok && name != "" {
+					keyParts = append(keyParts, name)
+				}
+				keyParts = append(keyParts, mon.GetUrn())
+				key := strings.Join(keyParts, "_")
 
 				pylds[key] = mon.GetPayload()
 				labels[key] = &pipepb.MonitoringInfo{

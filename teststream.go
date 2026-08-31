@@ -58,7 +58,7 @@ func (e *edgeTestStream[E]) toProtoParts(params translateParams) (spec *pipepb.F
 	}
 
 	spec = &pipepb.FunctionSpec{
-		Urn:     "beam:transform:test_stream:v1",
+		Urn:     "beam:transform:teststream:v1",
 		Payload: payload,
 	}
 	envID = "" // Runner primitive transform

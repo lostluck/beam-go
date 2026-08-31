@@ -43,7 +43,7 @@ func (ev *elementsEvent[E]) ToProto(coder coders.Coder[E]) (*pipepb.TestStreamPa
 		enc := coders.NewEncoder()
 		coder.Encode(enc, elm)
 		tsElements = append(tsElements, &pipepb.TestStreamPayload_TimestampedElement{
-			EncodedElement: enc.Data(),
+			EncodedElement: append([]byte(nil), enc.Data()...),
 			Timestamp:      ev.Timestamp.UnixMilli(),
 		})
 	}

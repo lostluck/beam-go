@@ -211,7 +211,6 @@ func (g *graph) build(ctx context.Context, dataCon harness.DataContext) ([]proce
 			c.input.update(c.edge.edgeID(), "sink", sink, nil, mets, dataCon.LoggerForTransform(c.edge.protoID()))
 		case bundleProcer: // Can't type assert generic types.
 			dofn := e.actualTransform()
-			uniqueName := e.options().Name
 
 			// We split out the "raw" dofn from the
 			// one the user wrote that we need to initialize
@@ -288,7 +287,7 @@ func (g *graph) build(ctx context.Context, dataCon harness.DataContext) ([]proce
 				}
 			}
 			// If this is the parallel input, the dofn needs to be set on the incoming DFC.
-			c.input.update(c.edge.edgeID(), uniqueName, dofn, procs, mets, dataCon.LoggerForTransform(c.edge.protoID()))
+			c.input.update(c.edge.edgeID(), c.edge.protoID(), dofn, procs, mets, dataCon.LoggerForTransform(c.edge.protoID()))
 		case flattener: // Can't type assert generic types.
 			// The same flatten edge will be re-invoked multiple times, once for each input node.
 			// But those nodes just need to point to the same dofn instance, and outputs

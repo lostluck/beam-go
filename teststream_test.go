@@ -96,7 +96,7 @@ func TestTestStream_Translation_Primitives(t *testing.T) {
 	if pt == nil {
 		t.Fatalf("expected transform e0 in components")
 	}
-	if got, want := pt.GetSpec().GetUrn(), "beam:transform:test_stream:v1"; got != want {
+	if got, want := pt.GetSpec().GetUrn(), "beam:transform:teststream:v1"; got != want {
 		t.Errorf("expected URN %q, got %q", want, got)
 	}
 	if pt.GetEnvironmentId() != "" {
@@ -213,7 +213,7 @@ func TestTestStream_Translation_KV(t *testing.T) {
 	if pt == nil {
 		t.Fatalf("expected transform e0 in components")
 	}
-	if got, want := pt.GetSpec().GetUrn(), "beam:transform:test_stream:v1"; got != want {
+	if got, want := pt.GetSpec().GetUrn(), "beam:transform:teststream:v1"; got != want {
 		t.Errorf("expected URN %q, got %q", want, got)
 	}
 

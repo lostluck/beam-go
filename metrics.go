@@ -70,7 +70,7 @@ func (ms *metricsStore) MonitoringInfos(logger *slog.Logger, g *graph) []*pipepb
 	encVarInt := func(v int64) []byte {
 		enc := coders.NewEncoder()
 		enc.Varint(uint64(v))
-		return enc.Data()
+		return append([]byte(nil), enc.Data()...)
 	}
 	ms.metMu.Lock()
 	for i, v := range ms.metrics {
@@ -98,7 +98,7 @@ func (ms *metricsStore) MonitoringInfos(logger *slog.Logger, g *graph) []*pipepb
 			enc.Varint(uint64(m.min))
 			enc.Varint(uint64(m.max))
 			m.mu.Unlock()
-			mon.Payload = enc.Data()
+			mon.Payload = append([]byte(nil), enc.Data()...)
 		case *dataChannelIndex:
 			mon.Urn = "beam:metric:data_channel:read_index:v1"
 			mon.Type = "beam:metrics:sum_int64:v1"
@@ -129,7 +129,7 @@ func (ms *metricsStore) MonitoringInfos(logger *slog.Logger, g *graph) []*pipepb
 			mon = &pipepb.MonitoringInfo{
 				Urn:     "beam:metric:sampled_byte_size:v1",
 				Type:    "beam:metrics:distribution_int64:v1",
-				Payload: enc.Data(),
+				Payload: append([]byte(nil), enc.Data()...),
 				Labels:  labels,
 			}
 		default:
@@ -238,6 +238,7 @@ type metricscommon struct {
 func (mc *metricscommon) setName(namepsace, name string) {
 	mc.namespace = namepsace
 	mc.name = name
+	mc.index = 0
 }
 
 type metricNamer interface {
