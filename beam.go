@@ -117,7 +117,7 @@ func isMetaType(v any) bool {
 }
 
 // All allows a single iteration of its stream of values.
-func (it *Iter[V]) All() func(perElm func(elm V) bool) {
+func (it Iter[V]) All() func(perElm func(elm V) bool) {
 	return func(perElm func(elm V) bool) {
 		for {
 			v, ok := it.source()

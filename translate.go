@@ -490,13 +490,25 @@ func schemaType(rt reflect.Type) *pipepb.Schema {
 func schemaFieldType(ft reflect.Type) *pipepb.FieldType {
 	sft := &pipepb.FieldType{}
 	switch ft.Kind() {
-	case reflect.Int, reflect.Int64:
+	case reflect.Bool:
+		sft.TypeInfo = &pipepb.FieldType_AtomicType{
+			AtomicType: pipepb.AtomicType_BOOLEAN,
+		}
+	case reflect.Int, reflect.Int64, reflect.Uint, reflect.Uint64:
 		sft.TypeInfo = &pipepb.FieldType_AtomicType{
 			AtomicType: pipepb.AtomicType_INT64,
 		}
-	case reflect.Int32:
+	case reflect.Int32, reflect.Uint32:
 		sft.TypeInfo = &pipepb.FieldType_AtomicType{
 			AtomicType: pipepb.AtomicType_INT32,
+		}
+	case reflect.Int16, reflect.Uint16:
+		sft.TypeInfo = &pipepb.FieldType_AtomicType{
+			AtomicType: pipepb.AtomicType_INT16,
+		}
+	case reflect.Int8, reflect.Uint8:
+		sft.TypeInfo = &pipepb.FieldType_AtomicType{
+			AtomicType: pipepb.AtomicType_BYTE,
 		}
 	case reflect.Float32:
 		sft.TypeInfo = &pipepb.FieldType_AtomicType{
@@ -509,6 +521,18 @@ func schemaFieldType(ft reflect.Type) *pipepb.FieldType {
 	case reflect.String:
 		sft.TypeInfo = &pipepb.FieldType_AtomicType{
 			AtomicType: pipepb.AtomicType_STRING,
+		}
+	case reflect.Slice:
+		if ft.Elem().Kind() == reflect.Uint8 {
+			sft.TypeInfo = &pipepb.FieldType_AtomicType{
+				AtomicType: pipepb.AtomicType_BYTES,
+			}
+		} else {
+			sft.TypeInfo = &pipepb.FieldType_IterableType{
+				IterableType: &pipepb.IterableType{
+					ElementType: schemaFieldType(ft.Elem()),
+				},
+			}
 		}
 	case reflect.Struct:
 		sft.TypeInfo = &pipepb.FieldType_RowType{
