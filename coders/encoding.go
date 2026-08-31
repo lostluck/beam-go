@@ -292,9 +292,10 @@ func (e *Encoder) Pane(pane PaneInfo) {
 	}
 
 	e.Grow(1)[0] = b
-	if encodingType == 0x01 {
+	switch encodingType {
+	case 0x01:
 		e.Varint(uint64(pane.Index))
-	} else if encodingType == 0x02 {
+	case 0x02:
 		e.Varint(uint64(pane.Index))
 		e.Varint(uint64(pane.NonSpeculativeIndex))
 	}

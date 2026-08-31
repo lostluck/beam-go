@@ -265,11 +265,12 @@ func addWindowingStrategy(strat *window.Strategy, internCoders map[string]string
 	urn := strat.Fn.WindowCoderURN()
 	wcid, ok := internCoders[urn]
 	if !ok {
-		if urn == "beam:coder:global_window:v1" {
+		switch urn {
+		case "beam:coder:global_window:v1":
 			wcid = "gwc"
-		} else if urn == "beam:coder:interval_window:v1" {
+		case "beam:coder:interval_window:v1":
 			wcid = "iwc"
-		} else {
+		default:
 			wcid = fmt.Sprintf("wc_%d", len(comps.Coders))
 		}
 		if comps.Coders == nil {

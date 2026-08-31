@@ -16,7 +16,6 @@
 package teststream_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -64,7 +63,7 @@ func (fn *DetailedPaneInspectorFn) ProcessBundle(dfc *beam.DFC[int]) error {
 }
 
 func pipeName(t *testing.T) beam.Options {
-	return beam.Name(fmt.Sprintf("%s", t.Name()))
+	return beam.Name(t.Name())
 }
 
 func TestTestStream_FixedWindows_Integration(t *testing.T) {
@@ -265,15 +264,17 @@ func (fn *MultiWindowPaneInspectorFn) ProcessBundle(dfc *beam.DFC[beam.KV[string
 		for range kv.Value.All() {
 		}
 		if w.Start.Equal(time.Unix(0, 0).UTC()) {
-			if p.Timing == coders.TimingOnTime {
+			switch p.Timing {
+			case coders.TimingOnTime:
 				fn.Win1OnTime.Inc(dfc, 1)
-			} else if p.Timing == coders.TimingLate {
+			case coders.TimingLate:
 				fn.Win1Late.Inc(dfc, 1)
 			}
 		} else if w.Start.Equal(time.Unix(10, 0).UTC()) {
-			if p.Timing == coders.TimingOnTime {
+			switch p.Timing {
+			case coders.TimingOnTime:
 				fn.Win2OnTime.Inc(dfc, 1)
-			} else if p.Timing == coders.TimingLate {
+			case coders.TimingLate:
 				fn.Win2Late.Inc(dfc, 1)
 			}
 		}

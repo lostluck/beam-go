@@ -229,7 +229,7 @@ func (fn *liftedAddingCombine[K, I, A]) ProcessBundle(dfc *DFC[KV[K, I]]) error 
 	}
 
 	if err := dfc.Process(func(ec ElmC, elm KV[K, I]) error {
-		win := fn.ObserveWindow.Of(ec)
+		win := fn.Of(ec)
 		kw := keyWindow[K]{key: elm.Key, win: win}
 		entry, exists := cache[kw]
 		if !exists {
@@ -310,7 +310,7 @@ func (fn *liftedMergedCombine[K, A]) ProcessBundle(dfc *DFC[KV[K, A]]) error {
 	const cacheMax = 10000
 
 	if err := dfc.Process(func(ec ElmC, elm KV[K, A]) error {
-		win := fn.ObserveWindow.Of(ec)
+		win := fn.Of(ec)
 		kw := keyWindow[K]{key: elm.Key, win: win}
 		entry, exists := cache[kw]
 		if !exists {
