@@ -16,6 +16,8 @@
 package beam
 
 import (
+	"slices"
+
 	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/internal/harness"
 	"lostluck.dev/beam-go/window"
@@ -35,6 +37,8 @@ type edgeDataSource[E Element] struct {
 	windowCoder windowCoder
 
 	output nodeIndex
+
+	timerExecutors map[string]timerExecutor
 }
 
 func (e *edgeDataSource[E]) protoID() string {
@@ -56,6 +60,10 @@ func (e *edgeDataSource[E]) outputs() map[string]nodeIndex {
 	return map[string]nodeIndex{"o0": e.output}
 }
 
+func (e *edgeDataSource[E]) setTimerExecutors(execs map[string]timerExecutor) {
+	e.timerExecutors = execs
+}
+
 func (e *edgeDataSource[E]) source(dc harness.DataContext, mets *metricsStore) (processor, processor) {
 	// This is what the Datasource emits to.
 	toConsumer := &DFC[E]{id: e.output}
@@ -66,6 +74,12 @@ func (e *edgeDataSource[E]) source(dc harness.DataContext, mets *metricsStore) (
 		wCoder = globalWindowCoderWrapper{}
 	}
 
+	var expectedTimerTransforms []string
+	for tid := range e.timerExecutors {
+		expectedTimerTransforms = append(expectedTimerTransforms, tid)
+	}
+	slices.Sort(expectedTimerTransforms)
+
 	// Just kick it off with an impulse.
 	root := &DFC[[]byte]{
 		id:         e.output,
@@ -73,11 +87,13 @@ func (e *edgeDataSource[E]) source(dc harness.DataContext, mets *metricsStore) (
 		transform:  e.transform,
 		metrics:    mets,
 		dofn: &datasource[E]{
-			DC:          dc,
-			SID:         harness.StreamID{PtransformID: e.transform, Port: e.port},
-			Output:      PCol[E]{valid: true, globalIndex: e.output, localDownstreamIndex: 0},
-			Coder:       e.makeCoder(),
-			WindowCoder: wCoder,
+			DC:                      dc,
+			SID:                     harness.StreamID{PtransformID: e.transform, Port: e.port},
+			Output:                  PCol[E]{valid: true, globalIndex: e.output, localDownstreamIndex: 0},
+			Coder:                   e.makeCoder(),
+			WindowCoder:             wCoder,
+			expectedTimerTransforms: expectedTimerTransforms,
+			timerExecutors:          e.timerExecutors,
 			dc: &dataChannelIndex{
 				transform: e.transform,
 				index:     0,
@@ -93,6 +109,7 @@ var _ sourcer = (*edgeDataSource[int])(nil)
 type sourcer interface {
 	multiEdge
 	source(dc harness.DataContext, mets *metricsStore) (processor, processor)
+	setTimerExecutors(execs map[string]timerExecutor)
 }
 
 // datasource reads from GRPC and emits of the specified type.
@@ -110,11 +127,14 @@ type datasource[E Element] struct {
 	Output PCol[E]
 
 	dc *dataChannelIndex
+
+	expectedTimerTransforms []string
+	timerExecutors          map[string]timerExecutor
 }
 
 func (fn *datasource[E]) ProcessBundle(dfc *DFC[[]byte]) error {
 	// Connect to Data service
-	elmsChan, err := fn.DC.Data.OpenElementChan(dfc.ctx, fn.SID, nil)
+	elmsChan, err := fn.DC.Data.OpenElementChan(dfc.ctx, fn.SID, fn.expectedTimerTransforms)
 	if err != nil {
 		return err
 	}
@@ -138,30 +158,37 @@ func (fn *datasource[E]) ProcessBundle(dfc *DFC[[]byte]) error {
 		wCoder = globalWindowCoderWrapper{}
 	}
 
-	// TODO outputing to timers callbacks
 	return dfc.Process(func(ec ElmC, _ []byte) error {
 	dataChan:
 		for dataElm := range elmsChan {
-			// Start reading byte blobs.
-			dec := coders.NewDecoder(dataElm.Data)
-			for !dec.Empty() {
-				// 	et, ws, pn := coders.DecodeWindowedValueHeader[coders.GWC](dec)  // TODO instead?
-				et := dec.Timestamp()
-				numWindows := dec.Uint32()
-				ws := make([]window.BoundedWindow, numWindows)
-				for i := range ws {
-					ws[i] = wCoder.Decode(dec)
+			if len(dataElm.Timers) > 0 {
+				if te, ok := fn.timerExecutors[dataElm.PtransformID]; ok {
+					if err := te.executeTimer(dataElm.TimerFamilyID, dataElm.Timers); err != nil {
+						return err
+					}
 				}
-				pn := dec.Pane()
-				elm := fn.Coder.Decode(dec)
-				fn.Output.Emit(ElmC{
-					eventTime:    et,
-					windows:      ws,
-					pane:         pn,
-					pcollections: ec.pcollections,
-				}, elm)
-				if fn.dc.IncrementAndCheckSplit(dfc) {
-					break dataChan
+			}
+			if len(dataElm.Data) > 0 {
+				// Start reading byte blobs.
+				dec := coders.NewDecoder(dataElm.Data)
+				for !dec.Empty() {
+					et := dec.Timestamp()
+					numWindows := dec.Uint32()
+					ws := make([]window.BoundedWindow, numWindows)
+					for i := range ws {
+						ws[i] = wCoder.Decode(dec)
+					}
+					pn := dec.Pane()
+					elm := fn.Coder.Decode(dec)
+					fn.Output.Emit(ElmC{
+						eventTime:    et,
+						windows:      ws,
+						pane:         pn,
+						pcollections: ec.pcollections,
+					}, elm)
+					if fn.dc.IncrementAndCheckSplit(dfc) {
+						break dataChan
+					}
 				}
 			}
 		}

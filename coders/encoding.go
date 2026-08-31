@@ -499,3 +499,25 @@ func (e *Encoder) Complex128(arg complex128) {
 	e.Double(real(arg))
 	e.Double(imag(arg))
 }
+
+// TimerHeader encodes the dynamicTimerTag, windows, and clearBit of a timer according to "beam:coder:timer:v1".
+func (e *Encoder) TimerHeader(dynamicTimerTag string, windows [][]byte, clearBit bool) {
+	e.StringUtf8(dynamicTimerTag)
+	e.Uint32(uint32(len(windows)))
+	for _, w := range windows {
+		data := e.Grow(len(w))
+		copy(data, w)
+	}
+	if clearBit {
+		e.Byte(1)
+	} else {
+		e.Byte(0)
+	}
+}
+
+// TimerDetails encodes the fireTimestamp, holdTimestamp, and pane of a non-cleared timer.
+func (e *Encoder) TimerDetails(fireTimestamp, holdTimestamp time.Time, pane PaneInfo) {
+	e.Timestamp(fireTimestamp)
+	e.Timestamp(holdTimestamp)
+	e.Pane(pane)
+}

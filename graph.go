@@ -151,6 +151,22 @@ func (g *graph) curEdgeIndex() edgeIndex {
 
 // build returns the root processors for SDK worker side execution.
 func (g *graph) build(ctx context.Context, dataCon harness.DataContext) ([]processor, *metricsStore) {
+	timerExecutors := map[string]timerExecutor{}
+	for _, edge := range g.edges {
+		if ke, ok := edge.(keyedEdge); ok && ke.hasTimers() {
+			if bp, ok := edge.(bundleProcer); ok {
+				if te, ok := bp.actualTransform().(timerExecutor); ok {
+					timerExecutors[edge.protoID()] = te
+				}
+			}
+		}
+	}
+	for _, edge := range g.edges {
+		if src, ok := edge.(sourcer); ok {
+			src.setTimerExecutors(timerExecutors)
+		}
+	}
+
 	type consumer struct {
 		input processor
 		edge  multiEdge

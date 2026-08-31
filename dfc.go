@@ -226,6 +226,12 @@ func (c *DFC[E]) update(edgeID edgeIndex, transform string, dofn any, procs []pr
 	c.observesWindows = checkObservesWindows(dofn)
 }
 
+func (c *DFC[E]) registerTimerCallback(familyID string, cb func(ec ElmC, key any, tag string) error) {
+	if reg, ok := c.dofn.(timerRegistrar); ok {
+		reg.registerTimerCallback(familyID, cb)
+	}
+}
+
 func checkObservesWindows(dofn any) bool {
 	if dofn == nil {
 		return false

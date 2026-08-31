@@ -302,11 +302,13 @@ func (c *DataChannel) makeChannel(fromSource bool, id clientID, additionalTransf
 		ec.mu.Lock()
 		defer ec.mu.Unlock()
 		if fromSource {
-			ec.want = (1 + int32(len(additionalTransforms)))
+			ec.want = 1 + int32(len(additionalTransforms))
 		}
 		if _, ok := c.endedInstructions[id.instID]; ok || (ec.want > 0 && ec.want == ec.got) {
-			ec.closed.Store(1)
-			close(ec.ch)
+			if !ec.Closed() {
+				ec.closed.Store(1)
+				close(ec.ch)
+			}
 		}
 		return ec
 	}
@@ -325,8 +327,10 @@ func (c *DataChannel) makeChannel(fromSource bool, id clientID, additionalTransf
 	// So we provide a pre-completed reader, and do not cache it, as there's no further cleanup for it.
 	if _, ok := c.endedInstructions[id.instID]; ok {
 		// Since this is freshly created, we can set the close conditions immeadiately.
-		ec.closed.Store(1)
-		close(ec.ch)
+		if !ec.Closed() {
+			ec.closed.Store(1)
+			close(ec.ch)
+		}
 		return ec
 	}
 

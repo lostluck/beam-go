@@ -113,6 +113,25 @@ func (g *graph) deferDoFn(dofn any, input nodeIndex, global edgeIndex) (ins, out
 					extras.states = map[string]stateIface{}
 				}
 				extras.states[sf.Name] = feature
+			case windowExpiryIface:
+				if extras == nil {
+					extras = &dofnExtras{}
+				}
+				if extras.timers == nil {
+					extras.timers = map[string]timerIface{}
+				}
+				feature.setFamilyID(sf.Name)
+				extras.timers[sf.Name] = feature
+				extras.onWindowExpiryTimerID = sf.Name
+			case timerIface:
+				if extras == nil {
+					extras = &dofnExtras{}
+				}
+				if extras.timers == nil {
+					extras.timers = map[string]timerIface{}
+				}
+				feature.setFamilyID(sf.Name)
+				extras.timers[sf.Name] = feature
 			case windowObserver:
 				if extras == nil {
 					extras = &dofnExtras{}
@@ -130,9 +149,11 @@ func (g *graph) deferDoFn(dofn any, input nodeIndex, global edgeIndex) (ins, out
 }
 
 type dofnExtras struct {
-	sdf            sdfHandler
-	states         map[string]stateIface
-	observesWindow bool
+	sdf                   sdfHandler
+	states                map[string]stateIface
+	timers                map[string]timerIface
+	onWindowExpiryTimerID string
+	observesWindow        bool
 }
 
 func (x *dofnExtras) SDF() sdfHandler {
@@ -172,13 +193,15 @@ type edgeDoFn[E Element] struct {
 	index     edgeIndex
 	transform string
 
-	dofn       Transform[E]
-	ins, outs  map[string]nodeIndex  // local field names to global collection ids.
-	sides      map[string]string     // local id to side input access pattern URN
-	states     map[string]stateIface // local id to state access pattern URN, this edgeDoFn must be wrapped with edgeKeyedDoFn.
-	parallelIn     nodeIndex
-	sdf            sdfHandler
-	observesWindow bool
+	dofn                  Transform[E]
+	ins, outs             map[string]nodeIndex  // local field names to global collection ids.
+	sides                 map[string]string     // local id to side input access pattern URN
+	states                map[string]stateIface // local id to state access pattern URN, this edgeDoFn must be wrapped with edgeKeyedDoFn.
+	timers                map[string]timerIface
+	onWindowExpiryTimerID string
+	parallelIn            nodeIndex
+	sdf                   sdfHandler
+	observesWindow        bool
 
 	opts beamopts.Struct
 }
@@ -268,13 +291,35 @@ func (e *edgeDoFn[E]) toProtoParts(params translateParams) (spec *pipepb.Functio
 		}
 	}
 
+	var tfs map[string]*pipepb.TimerFamilySpec
+	if len(e.timers) > 0 {
+		tfs = map[string]*pipepb.TimerFamilySpec{}
+		windowCoderID := "gwc"
+		if params.Graph != nil && int(e.parallelIn) < len(params.Graph.nodes) {
+			pNode := params.Graph.nodes[e.parallelIn]
+			if pNode != nil && pNode.windowingStrat() != nil && pNode.windowingStrat().Fn != nil {
+				urn := pNode.windowingStrat().Fn.WindowCoderURN()
+				if urn == "beam:coder:interval_window:v1" {
+					windowCoderID = "iwc"
+				}
+			}
+		}
+		timerParams := params
+		timerParams.WindowCoderID = windowCoderID
+		for local, tm := range e.timers {
+			tfs[local] = tm.toProtoParts(timerParams)
+		}
+	}
+
 	payloadProto := &pipepb.ParDoPayload{
 		DoFn: &pipepb.FunctionSpec{
 			Urn:     "beam:go:transform:dofn:v2",
 			Payload: wrappedPayload,
 		},
-		SideInputs: sis,
-		StateSpecs: sts,
+		SideInputs:                        sis,
+		StateSpecs:                        sts,
+		TimerFamilySpecs:                  tfs,
+		OnWindowExpirationTimerFamilySpec: e.onWindowExpiryTimerID,
 	}
 
 	if e.sdf != nil {

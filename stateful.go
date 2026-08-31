@@ -42,14 +42,26 @@ func (s *Scope) StatefulParDo[DF Transform[KV[K, V]], K Keys, V Element](input P
 		panic(fmt.Sprintf("%T passed to StatefulParDo. Stateful DoFns not be an SDF. Please split into two", dofn))
 	}
 
-	s.g.edges = append(s.g.edges, &edgeDoFn[KV[K, V]]{index: edgeID, dofn: &hiddenKeyedStateful[DF, K, V]{DoFn: dofn}, ins: ins, outs: outs, sides: sides, parallelIn: input.globalIndex, opts: opt, states: extras.states})
+	s.g.edges = append(s.g.edges, &edgeDoFn[KV[K, V]]{
+		index:                 edgeID,
+		dofn:                  &hiddenKeyedStateful[DF, K, V]{DoFn: dofn},
+		ins:                   ins,
+		outs:                  outs,
+		sides:                 sides,
+		parallelIn:            input.globalIndex,
+		opts:                  opt,
+		states:                extras.states,
+		timers:                extras.timers,
+		onWindowExpiryTimerID: extras.onWindowExpiryTimerID,
+	})
 
 	return dofn
 }
 
 var (
-	statefaceRT = reflect.TypeFor[stateIface]()
-	timerfaceRT = reflect.TypeFor[timerIface]()
+	statefaceRT    = reflect.TypeFor[stateIface]()
+	timerfaceRT    = reflect.TypeFor[timerIface]()
+	windowExpiryRT = reflect.TypeFor[windowExpiryIface]()
 )
 
 // IsStateful returns a list of the stateful fields in the DoFn.
@@ -57,14 +69,22 @@ func extractStateful[E Element](dofn Transform[E]) []string {
 	rt := reflect.TypeOf(dofn).Elem()
 	var ret []string
 	for f := range rt.Fields() {
-
 		ptrf := reflect.PointerTo(f.Type)
-
-		if ptrf.Implements(statefaceRT) || ptrf.Implements(timerfaceRT) {
+		if ptrf.Implements(statefaceRT) || ptrf.Implements(timerfaceRT) || ptrf.Implements(windowExpiryRT) {
 			ret = append(ret, f.Name)
 		}
 	}
 	return ret
+}
+
+type timerInitBase struct {
+	ctx         context.Context
+	dataCon     harness.DataContext
+	transformID string
+}
+
+type timerExecutor interface {
+	executeTimer(familyID string, timerBytes []byte) error
 }
 
 // edgeKeyedDoFn is for handling stateful DoFns which require elements to be
@@ -82,12 +102,16 @@ type edgeKeyedDoFn[K Keys, V Element] struct {
 
 // Initialize the Beam state of the DoFn's fields.
 func (e *edgeKeyedDoFn[K, V]) initializeDoFn(ctx context.Context, dataCon harness.DataContext, stateURL string) any {
-	// TODO use onWindowExpiryTimerID
 	return e.dofn.(stateful).initialize(ctx, dataCon, stateURL, e.transformID(), e.states, e.timers, e.coders, e.coderID)
+}
+
+func (e *edgeKeyedDoFn[K, V]) hasTimers() bool {
+	return len(e.timers) > 0 || e.onWindowExpiryTimerID != ""
 }
 
 type keyedEdge interface {
 	initializeDoFn(ctx context.Context, dataCon harness.DataContext, stateURL string) any
+	hasTimers() bool
 }
 
 type stateful interface {
@@ -101,8 +125,77 @@ type hiddenKeyedStateful[T Transform[KV[K, V]], K Keys, V Element] struct {
 
 	OnBundleFinish
 
-	keyCoder        coders.Coder[K]
-	stateInterfaces []stateIface
+	keyCoder              coders.Coder[K]
+	windowCoder           windowCoder
+	stateInterfaces       []stateIface
+	timerInterfaces       []timerIface
+	onWindowExpiryTimerID string
+
+	timerCallbacks map[string]func(ec ElmC, key any, tag string) error
+	downstream     []processor
+}
+
+func (fn *hiddenKeyedStateful[T, K, V]) registerTimerCallback(familyID string, cb func(ec ElmC, key any, tag string) error) {
+	if fn.timerCallbacks == nil {
+		fn.timerCallbacks = map[string]func(ec ElmC, key any, tag string) error{}
+	}
+	fn.timerCallbacks[familyID] = cb
+}
+
+func (fn *hiddenKeyedStateful[T, K, V]) executeTimer(familyID string, timerBytes []byte) error {
+	dec := coders.NewDecoder(timerBytes)
+	for !dec.Empty() {
+		key := fn.keyCoder.Decode(dec)
+		tag, numWindows, clearBit := dec.TimerHeader()
+		ws := make([]window.BoundedWindow, numWindows)
+		wCoder := fn.windowCoder
+		if wCoder == nil {
+			wCoder = globalWindowCoderWrapper{}
+		}
+		for i := range ws {
+			ws[i] = wCoder.Decode(dec)
+		}
+		if clearBit {
+			continue
+		}
+		fireTime, _, pane := dec.TimerDetails()
+
+		encKey := coders.NewEncoder()
+		fn.keyCoder.Encode(encKey, key)
+		kb := string(encKey.Data())
+
+		var win window.BoundedWindow = window.GlobalWindow{}
+		if len(ws) > 0 {
+			win = ws[0]
+		}
+		encWin := coders.NewEncoder()
+		switch w := win.(type) {
+		case window.GlobalWindow:
+			encWin.GlobalWindow()
+		case window.IntervalWindow:
+			encWin.IntervalWindow(w.End, w.Duration())
+		default:
+			encWin.GlobalWindow()
+		}
+		wb := string(encWin.Data())
+
+		ec := ElmC{
+			eventTime:    fireTime,
+			windows:      ws,
+			window:       win,
+			pane:         pane,
+			pcollections: fn.downstream,
+			keyBytes:     kb,
+			winBytes:     wb,
+		}
+
+		if cb, ok := fn.timerCallbacks[familyID]; ok {
+			if err := cb(ec, key, tag); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (fn *hiddenKeyedStateful[T, K, V]) keyed(e multiEdge, wrap *dofnWrap, coders map[string]*pipepb.Coder, coderID string) multiEdge {
@@ -120,10 +213,9 @@ func (fn *hiddenKeyedStateful[T, K, V]) keyed(e multiEdge, wrap *dofnWrap, coder
 func (fn *hiddenKeyedStateful[T, K, V]) initialize(ctx context.Context, dataCon harness.DataContext, url string, transformID string, states map[string]*pipepb.StateSpec, timers map[string]*pipepb.TimerFamilySpec, coders map[string]*pipepb.Coder, coderID string) any {
 	rv := reflect.ValueOf(fn.DoFn).Elem()
 
-	if len(states) == 0 {
-		panic("no states")
+	if len(states) == 0 && len(timers) == 0 && fn.onWindowExpiryTimerID == "" {
+		panic("no states or timers")
 	}
-	// TODO make handling LP unwraps a general function?
 	kvCoder := coders[coderID]
 	if kvCoder.GetSpec().GetUrn() == "beam:coder:length_prefix:v1" {
 		kvCoder = coders[kvCoder.GetComponentCoderIds()[0]]
@@ -137,20 +229,54 @@ func (fn *hiddenKeyedStateful[T, K, V]) initialize(ctx context.Context, dataCon 
 		dataCon: dataCon,
 		url:     url,
 	}
-	// Initialize states
 	for stateID, spec := range states {
-		// TODO: Also support fixed array of some states.
 		fv := rv.FieldByName(stateID)
 		if !fv.IsValid() {
 			panic(fmt.Sprintf("unknown state field with ID %v, for transform type %T", stateID, fn.DoFn))
 		}
-		// TODO: COLLECT STATES HERE, so we can call them OnBundleFinish, when we move to transaction tracking
 		if st, ok := fv.Addr().Interface().(stateIface); ok {
 			st.initialize(stb, stateID, transformID, spec, coders)
 			fn.stateInterfaces = append(fn.stateInterfaces, st)
 		} else {
-			panic(fmt.Sprintf("unnown state field with ID %v, doesn't implement stateful for field type %v", stateID, fv.Type()))
+			panic(fmt.Sprintf("unknown state field with ID %v, doesn't implement stateIface for field type %v", stateID, fv.Type()))
 		}
+	}
+
+	fn.timerInterfaces = make([]timerIface, 0, len(timers))
+	tmb := &timerInitBase{
+		ctx:         ctx,
+		dataCon:     dataCon,
+		transformID: transformID,
+	}
+	for timerID, spec := range timers {
+		fv := rv.FieldByName(timerID)
+		if !fv.IsValid() {
+			panic(fmt.Sprintf("unknown timer field with ID %v, for transform type %T", timerID, fn.DoFn))
+		}
+		if tm, ok := fv.Addr().Interface().(timerIface); ok {
+			tm.initialize(tmb, timerID, transformID, spec, coders)
+			fn.timerInterfaces = append(fn.timerInterfaces, tm)
+
+			if fn.windowCoder == nil {
+				tCoder := coders[spec.GetTimerFamilyCoderId()]
+				if tCoder != nil && len(tCoder.GetComponentCoderIds()) > 1 {
+					fn.windowCoder = windowCoderFromProto(coders, tCoder.GetComponentCoderIds()[1])
+				}
+			}
+		} else if we, ok := fv.Addr().Interface().(windowExpiryIface); ok {
+			we.initialize(tmb, timerID, transformID, spec, coders)
+			if fn.windowCoder == nil {
+				tCoder := coders[spec.GetTimerFamilyCoderId()]
+				if tCoder != nil && len(tCoder.GetComponentCoderIds()) > 1 {
+					fn.windowCoder = windowCoderFromProto(coders, tCoder.GetComponentCoderIds()[1])
+				}
+			}
+		} else {
+			panic(fmt.Sprintf("unknown timer field with ID %v, doesn't implement timerIface for field type %v", timerID, fv.Type()))
+		}
+	}
+	if fn.windowCoder == nil {
+		fn.windowCoder = globalWindowCoderWrapper{}
 	}
 	return fn.DoFn
 }
@@ -160,59 +286,61 @@ func (fn *hiddenKeyedStateful[T, K, V]) getUserTransform() any {
 }
 
 func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error {
+	fn.downstream = dfc.downstream
 	if err := fn.DoFn.ProcessBundle(dfc); err != nil {
 		return err
 	}
-	// Now that dfc is primed with the user's per element, we need to wrap it
-	// so that we can pass the encoded key context down to the user side.
 	userPerElm := dfc.perElm
-
-	// TODO: replace with a transaction handling per key/window.
 	memoKeys := map[K]string{}
 	memoWins := map[window.BoundedWindow]string{}
 
-	// Each state needs to keep it's own cache of key+window to values.
-
-	dfc.perElm = func(ec ElmC, e KV[K, V]) error {
-		kb, exists := memoKeys[e.Key]
-		if !exists {
-			enc := coders.NewEncoder()
-			fn.keyCoder.Encode(enc, e.Key)
-			kb = string(enc.Data())
-			memoKeys[e.Key] = kb
-		}
-
-		win := ec.window
-		if win == nil {
-			if len(ec.windows) > 0 {
-				win = ec.windows[0]
-			} else {
-				win = window.GlobalWindow{}
+	if userPerElm != nil {
+		dfc.perElm = func(ec ElmC, e KV[K, V]) error {
+			kb, exists := memoKeys[e.Key]
+			if !exists {
+				enc := coders.NewEncoder()
+				fn.keyCoder.Encode(enc, e.Key)
+				kb = string(enc.Data())
+				memoKeys[e.Key] = kb
 			}
-		}
-		wb, exists := memoWins[win]
-		if !exists {
-			enc := coders.NewEncoder()
-			switch w := win.(type) {
-			case window.GlobalWindow:
-				enc.GlobalWindow()
-			case window.IntervalWindow:
-				enc.IntervalWindow(w.End, w.Duration())
-			default:
-				enc.GlobalWindow()
-			}
-			wb = string(enc.Data())
-			memoWins[win] = wb
-		}
 
-		ec.keyBytes = kb
-		ec.winBytes = wb
-		return userPerElm(ec, e)
+			win := ec.window
+			if win == nil {
+				if len(ec.windows) > 0 {
+					win = ec.windows[0]
+				} else {
+					win = window.GlobalWindow{}
+				}
+			}
+			wb, exists := memoWins[win]
+			if !exists {
+				enc := coders.NewEncoder()
+				switch w := win.(type) {
+				case window.GlobalWindow:
+					enc.GlobalWindow()
+				case window.IntervalWindow:
+					enc.IntervalWindow(w.End, w.Duration())
+				default:
+					enc.GlobalWindow()
+				}
+				wb = string(enc.Data())
+				memoWins[win] = wb
+			}
+
+			ec.keyBytes = kb
+			ec.winBytes = wb
+			return userPerElm(ec, e)
+		}
 	}
 
 	fn.Do(dfc, func() error {
 		for _, st := range fn.stateInterfaces {
 			if err := st.persist(); err != nil {
+				return err
+			}
+		}
+		for _, tm := range fn.timerInterfaces {
+			if err := tm.writeTimers(dfc.ctx); err != nil {
 				return err
 			}
 		}
@@ -223,3 +351,5 @@ func (fn *hiddenKeyedStateful[T, K, V]) ProcessBundle(dfc *DFC[KV[K, V]]) error 
 
 var _ stateful = (*hiddenKeyedStateful[Transform[KV[int, int]], int, int])(nil)
 var _ Transform[KV[int, int]] = (*hiddenKeyedStateful[Transform[KV[int, int]], int, int])(nil)
+var _ timerExecutor = (*hiddenKeyedStateful[Transform[KV[int, int]], int, int])(nil)
+var _ timerRegistrar = (*hiddenKeyedStateful[Transform[KV[int, int]], int, int])(nil)

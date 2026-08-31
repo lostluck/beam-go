@@ -162,6 +162,7 @@ type translateParams struct {
 	InternedCoders map[string]string
 	Comps          *pipepb.Components
 	Graph          *graph
+	WindowCoderID  string
 }
 
 // marshal turns a pipeline graph into a normalized Beam pipeline proto.
@@ -643,8 +644,8 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 
 				if stfl, ok := wrap.DoFn.(stateful); ok {
 					userDoFn = stfl.getUserTransform()
-					if len(wrap.states) == 0 {
-						panic(fmt.Sprintf("decoded stateful, no states: %v", wrap))
+					if len(wrap.states) == 0 && len(wrap.timers) == 0 && wrap.onWindowExpiryTimerID == "" {
+						panic(fmt.Sprintf("decoded stateful, no states or timers: %v", wrap))
 					}
 				}
 			case "beam:transform:sdf_pair_with_restriction:v1":
@@ -746,9 +747,19 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 			newEdge := proc.produceDoFnEdge(tid, edgeID, wrap.DoFn, ins, outs, opt)
 			if stfl, ok := wrap.DoFn.(stateful); ok {
 				// TODO support side inputs in stateful DoFns.
-				onlyInputID := maps.Values(pt.GetInputs())[0]
-				coderID := pbd.GetPcollections()[onlyInputID].GetCoderId()
-
+				var coderID string
+				if len(pt.GetInputs()) > 0 {
+					onlyInputID := maps.Values(pt.GetInputs())[0]
+					coderID = pbd.GetPcollections()[onlyInputID].GetCoderId()
+				} else if len(wrap.timers) > 0 {
+					for _, tf := range wrap.timers {
+						tCoder := pbd.GetCoders()[tf.GetTimerFamilyCoderId()]
+						if tCoder != nil && len(tCoder.GetComponentCoderIds()) > 0 {
+							coderID = tCoder.GetComponentCoderIds()[0]
+							break
+						}
+					}
+				}
 				newEdge = stfl.keyed(newEdge, &wrap, pbd.GetCoders(), coderID)
 			}
 
@@ -806,7 +817,20 @@ func unmarshalToGraph(typeReg map[string]reflect.Type, pbd *fnpb.ProcessBundleDe
 			}
 		}
 		if !progress && len(remaining) > 0 {
-			panic(fmt.Sprintf("couldn't resolve remaining placeholder nodes: %+v", remaining))
+			for _, edgeID := range remaining {
+				e := g.edges[edgeID].(*edgePlaceholder)
+				if e.kind == "source" {
+					outID := getSingleValue(e.outs)
+					global := indexToPCol[outID]
+					pcol := pbd.GetPcollections()[global]
+					g.nodes[outID] = nodeForCoder(pbd.GetCoders(), pcol.GetCoderId(), global, outID, pcol.GetIsBounded() == pipepb.IsBounded_BOUNDED)
+					progress = true
+					break
+				}
+			}
+			if !progress {
+				panic(fmt.Sprintf("couldn't resolve remaining placeholder nodes: %+v", remaining))
+			}
 		}
 		placeholders = remaining
 	}
@@ -1011,3 +1035,90 @@ func windowStrategyFromFnSpec(spec *pipepb.FunctionSpec) *window.Strategy {
 	}
 	return window.DefaultStrategy()
 }
+
+func unwrapCoderURN(cs map[string]*pipepb.Coder, cid string) string {
+	c, ok := cs[cid]
+	if !ok {
+		return ""
+	}
+	switch c.GetSpec().GetUrn() {
+	case "beam:coder:length_prefix:v1", "beam:coder:windowed_value:v1":
+		if len(c.GetComponentCoderIds()) > 0 {
+			return unwrapCoderURN(cs, c.GetComponentCoderIds()[0])
+		}
+	}
+	return c.GetSpec().GetUrn()
+}
+
+func nodeForCoder(cs map[string]*pipepb.Coder, cid string, global string, id nodeIndex, isBounded bool) node {
+	c, ok := cs[cid]
+	if ok {
+		switch c.GetSpec().GetUrn() {
+		case "beam:coder:length_prefix:v1", "beam:coder:windowed_value:v1":
+			if len(c.GetComponentCoderIds()) > 0 {
+				return nodeForCoder(cs, c.GetComponentCoderIds()[0], global, id, isBounded)
+			}
+		case "beam:coder:string_utf8:v1":
+			tn := &typedNode[string]{id: global, index: id, isBounded: isBounded}
+			tn.initCoder(cid, cs)
+			return tn
+		case "beam:coder:varint:v1":
+			tn := &typedNode[int]{id: global, index: id, isBounded: isBounded}
+			tn.initCoder(cid, cs)
+			return tn
+		case "beam:coder:bytes:v1":
+			tn := &typedNode[[]byte]{id: global, index: id, isBounded: isBounded}
+			tn.initCoder(cid, cs)
+			return tn
+		case "beam:coder:double:v1":
+			tn := &typedNode[float64]{id: global, index: id, isBounded: isBounded}
+			tn.initCoder(cid, cs)
+			return tn
+		case "beam:coder:bool:v1":
+			tn := &typedNode[bool]{id: global, index: id, isBounded: isBounded}
+			tn.initCoder(cid, cs)
+			return tn
+		case "beam:coder:kv:v1":
+			if len(c.GetComponentCoderIds()) >= 2 {
+				kUrn := unwrapCoderURN(cs, c.GetComponentCoderIds()[0])
+				vUrn := unwrapCoderURN(cs, c.GetComponentCoderIds()[1])
+				switch kUrn {
+				case "beam:coder:string_utf8:v1":
+					switch vUrn {
+					case "beam:coder:varint:v1":
+						tn := &typedNode[KV[string, int]]{id: global, index: id, isBounded: isBounded}
+						tn.initCoder(cid, cs)
+						return tn
+					case "beam:coder:string_utf8:v1":
+						tn := &typedNode[KV[string, string]]{id: global, index: id, isBounded: isBounded}
+						tn.initCoder(cid, cs)
+						return tn
+					case "beam:coder:bytes:v1":
+						tn := &typedNode[KV[string, []byte]]{id: global, index: id, isBounded: isBounded}
+						tn.initCoder(cid, cs)
+						return tn
+					case "beam:coder:double:v1":
+						tn := &typedNode[KV[string, float64]]{id: global, index: id, isBounded: isBounded}
+						tn.initCoder(cid, cs)
+						return tn
+					}
+				case "beam:coder:varint:v1":
+					switch vUrn {
+					case "beam:coder:varint:v1":
+						tn := &typedNode[KV[int, int]]{id: global, index: id, isBounded: isBounded}
+						tn.initCoder(cid, cs)
+						return tn
+					case "beam:coder:string_utf8:v1":
+						tn := &typedNode[KV[int, string]]{id: global, index: id, isBounded: isBounded}
+						tn.initCoder(cid, cs)
+						return tn
+					}
+				}
+			}
+		}
+	}
+	tn := &typedNode[[]byte]{id: global, index: id, isBounded: isBounded}
+	tn.initCoder(cid, cs)
+	return tn
+}
+

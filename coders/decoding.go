@@ -259,3 +259,19 @@ func DecodeWindowedValueHeader[W window](d *Decoder) (time.Time, []W, PaneInfo) 
 	pane := d.Pane()
 	return et, windows, pane
 }
+
+// TimerHeader decodes the dynamicTimerTag, windows count, and clearBit from a timer according to "beam:coder:timer:v1".
+func (d *Decoder) TimerHeader() (tag string, numWindows uint32, clearBit bool) {
+	tag = d.StringUtf8()
+	numWindows = d.Uint32()
+	clearBit = d.Bool()
+	return tag, numWindows, clearBit
+}
+
+// TimerDetails decodes the fireTimestamp, holdTimestamp, and pane of a non-cleared timer.
+func (d *Decoder) TimerDetails() (fireTimestamp, holdTimestamp time.Time, pane PaneInfo) {
+	fireTimestamp = d.Timestamp()
+	holdTimestamp = d.Timestamp()
+	pane = d.Pane()
+	return fireTimestamp, holdTimestamp, pane
+}

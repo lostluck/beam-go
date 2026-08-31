@@ -16,11 +16,14 @@
 package beam
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"sync"
+	"time"
 
 	"lostluck.dev/beam-go/coders"
+	"lostluck.dev/beam-go/internal/harness"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"
 	"lostluck.dev/beam-go/window"
 )
@@ -364,20 +367,242 @@ var (
 // State and Timers //
 //////////////////////
 
-type timer struct{ beamMixin }
-
-func (timer) timerIface() {}
-
 type timerIface interface {
-	timerIface()
+	isTimer()
+	timeDomain() pipepb.TimeDomain_Enum
+	toProtoParts(params translateParams) *pipepb.TimerFamilySpec
+	initialize(tmb *timerInitBase, familyID, transformID string, spec *pipepb.TimerFamilySpec, coders map[string]*pipepb.Coder)
+	writeTimers(ctx context.Context) error
+	setFamilyID(id string)
+	getFamilyID() string
 }
 
-type TimerEvent struct{ timer }
-type TimerProcessing struct{ timer }
+type windowExpiryIface interface {
+	timerIface
+	isWindowExpiry()
+}
+
+type timerRegistrar interface {
+	registerTimerCallback(familyID string, cb func(ec ElmC, key any, tag string) error)
+}
+
+type timer struct {
+	beamMixin
+	familyID string
+	init     *timerInitBase
+	pending  []pendingTimer
+}
+
+type pendingTimer struct {
+	keyBytes      string
+	winBytes      string
+	tag           string
+	clearBit      bool
+	fireTimestamp time.Time
+	holdTimestamp time.Time
+	pane          coders.PaneInfo
+}
+
+func (t *timer) isTimer() {}
+
+func (t *timer) setFamilyID(id string) {
+	t.familyID = id
+}
+
+func (t *timer) getFamilyID() string {
+	return t.familyID
+}
+
+func (t *timer) initialize(tmb *timerInitBase, familyID, transformID string, spec *pipepb.TimerFamilySpec, coders map[string]*pipepb.Coder) {
+	t.init = tmb
+	t.familyID = familyID
+	t.pending = nil
+}
+
+func (t *timer) writeTimers(ctx context.Context) error {
+	if len(t.pending) == 0 || t.init == nil {
+		return nil
+	}
+	defer func() { t.pending = nil }()
+
+	w, err := t.init.dataCon.Data.OpenTimerWrite(ctx, harness.StreamID{PtransformID: t.init.transformID}, t.familyID)
+	if err != nil {
+		return err
+	}
+
+	for _, pt := range t.pending {
+		enc := coders.NewEncoder()
+		copy(enc.Grow(len(pt.keyBytes)), pt.keyBytes)
+		enc.TimerHeader(pt.tag, [][]byte{[]byte(pt.winBytes)}, pt.clearBit)
+		if !pt.clearBit {
+			enc.TimerDetails(pt.fireTimestamp, pt.holdTimestamp, pt.pane)
+		}
+		if _, err := w.Write(enc.Data()); err != nil {
+			_ = w.Close()
+			return err
+		}
+	}
+	return w.Close()
+}
+
+// TimerEvent is an event-time timer field on a Stateful DoFn.
+// It fires when the watermark advances past the set timestamp.
+type TimerEvent[K Keys] struct{ timer }
+
+func (TimerEvent[K]) timeDomain() pipepb.TimeDomain_Enum {
+	return pipepb.TimeDomain_EVENT_TIME
+}
+
+func (t *TimerEvent[K]) toProtoParts(params translateParams) *pipepb.TimerFamilySpec {
+	keyCoderID := addCoder[K](params.InternedCoders, params.Comps.GetCoders())
+	winCoderID := params.WindowCoderID
+	if winCoderID == "" {
+		winCoderID = "gwc"
+	}
+	timerCoderID := putCoder(params.Comps.GetCoders(), "beam:coder:timer:v1", nil, []string{keyCoderID, winCoderID})
+	return &pipepb.TimerFamilySpec{
+		TimeDomain:         pipepb.TimeDomain_EVENT_TIME,
+		TimerFamilyCoderId: timerCoderID,
+	}
+}
+
+func (t *TimerEvent[K]) Set(ec ElmC, targetTime time.Time) {
+	t.SetWithTag(ec, "", targetTime)
+}
+
+func (t *TimerEvent[K]) SetWithTag(ec ElmC, tag string, targetTime time.Time) {
+	t.pending = append(t.pending, pendingTimer{
+		keyBytes:      ec.keyBytes,
+		winBytes:      ec.winBytes,
+		tag:           tag,
+		clearBit:      false,
+		fireTimestamp: targetTime,
+		holdTimestamp: targetTime,
+		pane:          ec.pane,
+	})
+}
+
+func (t *TimerEvent[K]) Clear(ec ElmC) {
+	t.ClearTag(ec, "")
+}
+
+func (t *TimerEvent[K]) ClearTag(ec ElmC, tag string) {
+	t.pending = append(t.pending, pendingTimer{
+		keyBytes: ec.keyBytes,
+		winBytes: ec.winBytes,
+		tag:      tag,
+		clearBit: true,
+	})
+}
+
+func (t *TimerEvent[K]) OnFire(dfc timerRegistrar, callback func(ec ElmC, key K) error) {
+	dfc.registerTimerCallback(t.familyID, func(ec ElmC, key any, tag string) error {
+		return callback(ec, key.(K))
+	})
+}
+
+func (t *TimerEvent[K]) OnFireTagged(dfc timerRegistrar, callback func(ec ElmC, key K, tag string) error) {
+	dfc.registerTimerCallback(t.familyID, func(ec ElmC, key any, tag string) error {
+		return callback(ec, key.(K), tag)
+	})
+}
+
+// TimerProcessing is a processing-time timer field on a Stateful DoFn.
+// It fires when real-time processing time advances past the set timestamp.
+type TimerProcessing[K Keys] struct{ timer }
+
+func (TimerProcessing[K]) timeDomain() pipepb.TimeDomain_Enum {
+	return pipepb.TimeDomain_PROCESSING_TIME
+}
+
+func (t *TimerProcessing[K]) toProtoParts(params translateParams) *pipepb.TimerFamilySpec {
+	keyCoderID := addCoder[K](params.InternedCoders, params.Comps.GetCoders())
+	winCoderID := params.WindowCoderID
+	if winCoderID == "" {
+		winCoderID = "gwc"
+	}
+	timerCoderID := putCoder(params.Comps.GetCoders(), "beam:coder:timer:v1", nil, []string{keyCoderID, winCoderID})
+	return &pipepb.TimerFamilySpec{
+		TimeDomain:         pipepb.TimeDomain_PROCESSING_TIME,
+		TimerFamilyCoderId: timerCoderID,
+	}
+}
+
+func (t *TimerProcessing[K]) Set(ec ElmC, targetTime time.Time) {
+	t.SetWithTag(ec, "", targetTime)
+}
+
+func (t *TimerProcessing[K]) SetWithTag(ec ElmC, tag string, targetTime time.Time) {
+	t.pending = append(t.pending, pendingTimer{
+		keyBytes:      ec.keyBytes,
+		winBytes:      ec.winBytes,
+		tag:           tag,
+		clearBit:      false,
+		fireTimestamp: targetTime,
+		holdTimestamp: targetTime,
+		pane:          ec.pane,
+	})
+}
+
+func (t *TimerProcessing[K]) Clear(ec ElmC) {
+	t.ClearTag(ec, "")
+}
+
+func (t *TimerProcessing[K]) ClearTag(ec ElmC, tag string) {
+	t.pending = append(t.pending, pendingTimer{
+		keyBytes: ec.keyBytes,
+		winBytes: ec.winBytes,
+		tag:      tag,
+		clearBit: true,
+	})
+}
+
+func (t *TimerProcessing[K]) OnFire(dfc timerRegistrar, callback func(ec ElmC, key K) error) {
+	dfc.registerTimerCallback(t.familyID, func(ec ElmC, key any, tag string) error {
+		return callback(ec, key.(K))
+	})
+}
+
+func (t *TimerProcessing[K]) OnFireTagged(dfc timerRegistrar, callback func(ec ElmC, key K, tag string) error) {
+	dfc.registerTimerCallback(t.familyID, func(ec ElmC, key any, tag string) error {
+		return callback(ec, key.(K), tag)
+	})
+}
+
+// OnWindowExpiration is an optional field on a Stateful DoFn that is called
+// when a window expires past allowed lateness, allowing the DoFn to flush, emit,
+// or process any remaining buffered state before the window is discarded.
+type OnWindowExpiration[K Keys] struct{ timer }
+
+func (OnWindowExpiration[K]) timeDomain() pipepb.TimeDomain_Enum {
+	return pipepb.TimeDomain_EVENT_TIME
+}
+
+func (OnWindowExpiration[K]) isWindowExpiry() {}
+
+func (w *OnWindowExpiration[K]) toProtoParts(params translateParams) *pipepb.TimerFamilySpec {
+	keyCoderID := addCoder[K](params.InternedCoders, params.Comps.GetCoders())
+	winCoderID := params.WindowCoderID
+	if winCoderID == "" {
+		winCoderID = "gwc"
+	}
+	timerCoderID := putCoder(params.Comps.GetCoders(), "beam:coder:timer:v1", nil, []string{keyCoderID, winCoderID})
+	return &pipepb.TimerFamilySpec{
+		TimeDomain:         pipepb.TimeDomain_EVENT_TIME,
+		TimerFamilyCoderId: timerCoderID,
+	}
+}
+
+func (w *OnWindowExpiration[K]) OnExpire(dfc timerRegistrar, callback func(ec ElmC, key K) error) {
+	dfc.registerTimerCallback(w.familyID, func(ec ElmC, key any, tag string) error {
+		return callback(ec, key.(K))
+	})
+}
 
 var (
-	_ timerIface = (*TimerEvent)(nil)
-	_ timerIface = (*TimerProcessing)(nil)
+	_ timerIface        = (*TimerEvent[int])(nil)
+	_ timerIface        = (*TimerProcessing[int])(nil)
+	_ windowExpiryIface = (*OnWindowExpiration[int])(nil)
 )
 
 // what else am I missing?
