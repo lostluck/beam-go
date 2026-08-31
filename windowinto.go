@@ -123,12 +123,10 @@ func (fn *windowIntoDoFn[E]) ProcessBundle(dfc *DFC[E]) error {
 		if fn.Strategy != nil && fn.Strategy.Fn != nil {
 			windows := fn.Strategy.Fn.AssignWindows(ec.EventTime())
 			subEC := ElmC{
-				elmContext: elmContext{
-					eventTime: ec.EventTime(),
-					windows:   windows,
-					window:    nil,
-					pane:      ec.pane,
-				},
+				eventTime:    ec.EventTime(),
+				windows:      windows,
+				window:       nil,
+				pane:         ec.pane,
 				pcollections: ec.pcollections,
 			}
 			fn.Output.Emit(subEC, elm)

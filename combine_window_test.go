@@ -47,8 +47,8 @@ func TestLiftedAddingCombine_WindowPartitioning_Table(t *testing.T) {
 	w2 := window.IntervalWindow{Start: time.Unix(10, 0).UTC(), End: time.Unix(20, 0).UTC()}
 
 	tests := []struct {
-		name     string
-		inputs   []struct {
+		name   string
+		inputs []struct {
 			key       string
 			val       int
 			window    window.BoundedWindow
@@ -133,12 +133,10 @@ func TestLiftedAddingCombine_WindowPartitioning_Table(t *testing.T) {
 
 			for _, in := range tc.inputs {
 				ec := ElmC{
-					elmContext: elmContext{
-						eventTime: in.eventTime,
-						windows:   []window.BoundedWindow{in.window},
-						window:    in.window,
-						pane:      coders.NoFiringPane,
-					},
+					eventTime: in.eventTime,
+					windows:   []window.BoundedWindow{in.window},
+					window:    in.window,
+					pane:      coders.NoFiringPane,
 				}
 				if err := dfc.processElement(ec, KV[string, int]{Key: in.key, Value: in.val}); err != nil {
 					t.Fatalf("processElement failed: %v", err)

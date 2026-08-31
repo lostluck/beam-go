@@ -153,14 +153,12 @@ func (c *DFC[E]) processElement(ec ElmC, elm E) error {
 	if c.observesWindows && len(ec.windows) > 1 {
 		for _, w := range ec.windows {
 			subEC := ElmC{
-				elmContext: elmContext{
-					eventTime: ec.eventTime,
-					windows:   []window.BoundedWindow{w},
-					window:    w,
-					pane:      ec.pane,
-					keyBytes:  ec.keyBytes,
-					winBytes:  ec.winBytes,
-				},
+				eventTime:    ec.eventTime,
+				windows:      []window.BoundedWindow{w},
+				window:       w,
+				pane:         ec.pane,
+				keyBytes:     ec.keyBytes,
+				winBytes:     ec.winBytes,
 				pcollections: c.downstream,
 			}
 			if err := c.perElm(subEC, elm); err != nil {

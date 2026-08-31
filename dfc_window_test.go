@@ -226,11 +226,9 @@ func TestDFC_WindowExplosion_Table(t *testing.T) {
 			}
 
 			inputEC := ElmC{
-				elmContext: elmContext{
-					eventTime: time.Unix(7, 0).UTC(),
-					windows:   tc.inWindows,
-					pane:      tc.inPane,
-				},
+				eventTime: time.Unix(7, 0).UTC(),
+				windows:   tc.inWindows,
+				pane:      tc.inPane,
 			}
 
 			if err := dfc.processElement(inputEC, "test-element"); err != nil {
@@ -269,11 +267,9 @@ func TestDFC_NoWindowExplosion_WhenNotObserving(t *testing.T) {
 	}
 
 	inputEC := ElmC{
-		elmContext: elmContext{
-			eventTime: time.Unix(7, 0).UTC(),
-			windows:   multiWindows,
-			pane:      coders.NoFiringPane,
-		},
+		eventTime: time.Unix(7, 0).UTC(),
+		windows:   multiWindows,
+		pane:      coders.NoFiringPane,
 	}
 
 	if err := dfc.processElement(inputEC, "batch-element"); err != nil {

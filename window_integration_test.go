@@ -35,12 +35,10 @@ func (fn *TimestampedIntSourceFn) ProcessBundle(dfc *DFC[[]byte]) error {
 		t0 := time.Unix(0, 0).UTC()
 		for i := 0; i < fn.Count; i++ {
 			subEC := ElmC{
-				elmContext: elmContext{
-					eventTime: t0.Add(time.Duration(i) * fn.Step),
-					windows:   ec.windows,
-					window:    ec.window,
-					pane:      ec.pane,
-				},
+				eventTime:    t0.Add(time.Duration(i) * fn.Step),
+				windows:      ec.windows,
+				window:       ec.window,
+				pane:         ec.pane,
 				pcollections: ec.pcollections,
 			}
 			fn.Output.Emit(subEC, i)
@@ -108,12 +106,10 @@ func (fn *TimestampedKVSourceFn) ProcessBundle(dfc *DFC[[]byte]) error {
 		t0 := time.Unix(0, 0).UTC()
 		for i := 0; i < fn.Count; i++ {
 			subEC := ElmC{
-				elmContext: elmContext{
-					eventTime: t0.Add(time.Duration(i) * fn.Step),
-					windows:   ec.windows,
-					window:    ec.window,
-					pane:      ec.pane,
-				},
+				eventTime:    t0.Add(time.Duration(i) * fn.Step),
+				windows:      ec.windows,
+				window:       ec.window,
+				pane:         ec.pane,
 				pcollections: ec.pcollections,
 			}
 			fn.Output.Emit(subEC, KV[string, int]{Key: fn.Key, Value: 1})
@@ -210,12 +206,10 @@ func (fn *SpecificTimestampKVSourceFn) ProcessBundle(dfc *DFC[[]byte]) error {
 		t0 := time.Unix(0, 0).UTC()
 		for _, offset := range fn.Timestamps {
 			subEC := ElmC{
-				elmContext: elmContext{
-					eventTime: t0.Add(offset),
-					windows:   ec.windows,
-					window:    ec.window,
-					pane:      ec.pane,
-				},
+				eventTime:    t0.Add(offset),
+				windows:      ec.windows,
+				window:       ec.window,
+				pane:         ec.pane,
 				pcollections: ec.pcollections,
 			}
 			fn.Output.Emit(subEC, KV[string, int]{Key: fn.Key, Value: 1})
@@ -302,12 +296,10 @@ func (fn *SpecificTimestampKVValuesSourceFn) ProcessBundle(dfc *DFC[[]byte]) err
 		t0 := time.Unix(0, 0).UTC()
 		for _, item := range fn.Values {
 			subEC := ElmC{
-				elmContext: elmContext{
-					eventTime: t0.Add(item.Offset),
-					windows:   ec.windows,
-					window:    ec.window,
-					pane:      ec.pane,
-				},
+				eventTime:    t0.Add(item.Offset),
+				windows:      ec.windows,
+				window:       ec.window,
+				pane:         ec.pane,
 				pcollections: ec.pcollections,
 			}
 			fn.Output.Emit(subEC, KV[string, int]{Key: fn.Key, Value: item.Val})
@@ -473,4 +465,3 @@ func TestWindow_TriggerDSL_EarlyLateFirings_Pipeline(t *testing.T) {
 		t.Errorf("sink.Processed = %v, want %v", got, want)
 	}
 }
-

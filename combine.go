@@ -253,12 +253,10 @@ func (fn *liftedAddingCombine[K, I, A]) ProcessBundle(dfc *DFC[KV[K, I]]) error 
 				}
 				delete(cache, k)
 				outEC := ElmC{
-					elmContext: elmContext{
-						eventTime: ca.eventTime,
-						windows:   []window.BoundedWindow{ca.window},
-						window:    ca.window,
-						pane:      ca.pane,
-					},
+					eventTime:    ca.eventTime,
+					windows:      []window.BoundedWindow{ca.window},
+					window:       ca.window,
+					pane:         ca.pane,
 					pcollections: ec.pcollections,
 				}
 				fn.Output.Emit(outEC, KV[K, A]{Key: k.key, Value: ca.accum})
@@ -275,12 +273,10 @@ func (fn *liftedAddingCombine[K, I, A]) ProcessBundle(dfc *DFC[KV[K, I]]) error 
 	fn.Do(dfc, func() error {
 		for k, ca := range cache {
 			outEC := ElmC{
-				elmContext: elmContext{
-					eventTime: ca.eventTime,
-					windows:   []window.BoundedWindow{ca.window},
-					window:    ca.window,
-					pane:      ca.pane,
-				},
+				eventTime:    ca.eventTime,
+				windows:      []window.BoundedWindow{ca.window},
+				window:       ca.window,
+				pane:         ca.pane,
 				pcollections: dfc.downstream,
 			}
 			fn.Output.Emit(outEC, KV[K, A]{Key: k.key, Value: ca.accum})
@@ -338,12 +334,10 @@ func (fn *liftedMergedCombine[K, A]) ProcessBundle(dfc *DFC[KV[K, A]]) error {
 				}
 				delete(cache, k)
 				outEC := ElmC{
-					elmContext: elmContext{
-						eventTime: ca.eventTime,
-						windows:   []window.BoundedWindow{ca.window},
-						window:    ca.window,
-						pane:      ca.pane,
-					},
+					eventTime:    ca.eventTime,
+					windows:      []window.BoundedWindow{ca.window},
+					window:       ca.window,
+					pane:         ca.pane,
 					pcollections: ec.pcollections,
 				}
 				fn.Output.Emit(outEC, KV[K, A]{Key: k.key, Value: ca.accum})
@@ -360,12 +354,10 @@ func (fn *liftedMergedCombine[K, A]) ProcessBundle(dfc *DFC[KV[K, A]]) error {
 	fn.Do(dfc, func() error {
 		for k, ca := range cache {
 			outEC := ElmC{
-				elmContext: elmContext{
-					eventTime: ca.eventTime,
-					windows:   []window.BoundedWindow{ca.window},
-					window:    ca.window,
-					pane:      ca.pane,
-				},
+				eventTime:    ca.eventTime,
+				windows:      []window.BoundedWindow{ca.window},
+				window:       ca.window,
+				pane:         ca.pane,
 				pcollections: dfc.downstream,
 			}
 			fn.Output.Emit(outEC, KV[K, A]{Key: k.key, Value: ca.accum})

@@ -155,11 +155,9 @@ func (fn *datasource[E]) ProcessBundle(dfc *DFC[[]byte]) error {
 				pn := dec.Pane()
 				elm := fn.Coder.Decode(dec)
 				fn.Output.Emit(ElmC{
-					elmContext: elmContext{
-						eventTime: et,
-						windows:   ws,
-						pane:      pn,
-					},
+					eventTime:    et,
+					windows:      ws,
+					pane:         pn,
 					pcollections: ec.pcollections,
 				}, elm)
 				if fn.dc.IncrementAndCheckSplit(dfc) {
