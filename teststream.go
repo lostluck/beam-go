@@ -71,7 +71,7 @@ func (e *edgeTestStream[E]) toProtoParts(params translateParams) (spec *pipepb.F
 //
 // Users should generally prefer using the lostluck.dev/beam-go/transforms/testing/teststream
 // package for a fluent builder API.
-func (s *Scope) TestStream[E Element](payloadFn func(coder coders.Coder[E], coderID string) (*pipepb.TestStreamPayload, error)) PCol[E] {
+func TestStream[E Element](s *Scope, payloadFn func(coder coders.Coder[E], coderID string) (*pipepb.TestStreamPayload, error)) PCol[E] {
 	edgeID := s.g.curEdgeIndex()
 	nodeID := s.g.curNodeIndex()
 	s.g.edges = append(s.g.edges, &edgeTestStream[E]{index: edgeID, output: nodeID, payloadFn: payloadFn})

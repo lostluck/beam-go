@@ -31,7 +31,7 @@ func TestTestStream_Translation_Primitives(t *testing.T) {
 	s := &Scope{g: &graph{}}
 	t0 := time.Unix(100, 0).UTC()
 
-	pcol := s.TestStream(func(coder coders.Coder[string], coderID string) (*pipepb.TestStreamPayload, error) {
+	pcol := TestStream(s, func(coder coders.Coder[string], coderID string) (*pipepb.TestStreamPayload, error) {
 		enc1 := coders.NewEncoder()
 		coder.Encode(enc1, "alpha")
 		enc2 := coders.NewEncoder()
@@ -158,7 +158,7 @@ func TestTestStream_Translation_KV(t *testing.T) {
 	s := &Scope{g: &graph{}}
 	t0 := time.Unix(200, 0).UTC()
 
-	pcol := s.TestStream(func(coder coders.Coder[KV[string, int]], coderID string) (*pipepb.TestStreamPayload, error) {
+	pcol := TestStream(s, func(coder coders.Coder[KV[string, int]], coderID string) (*pipepb.TestStreamPayload, error) {
 		enc1 := coders.NewEncoder()
 		coder.Encode(enc1, Pair("sensorA", 42))
 		enc2 := coders.NewEncoder()

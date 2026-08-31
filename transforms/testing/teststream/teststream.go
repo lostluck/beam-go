@@ -125,7 +125,7 @@ func (b *Builder[E]) Events() []Event[E] {
 
 // Build materializes the TestStream runner transform in the pipeline graph, returning an unbounded PCol[E].
 func (b *Builder[E]) Build() beam.PCol[E] {
-	return b.s.TestStream(func(coder coders.Coder[E], coderID string) (*pipepb.TestStreamPayload, error) {
+	return beam.TestStream(b.s, func(coder coders.Coder[E], coderID string) (*pipepb.TestStreamPayload, error) {
 		var protoEvents []*pipepb.TestStreamPayload_Event
 		for _, ev := range b.events {
 			pe, err := ev.ToProto(coder)
