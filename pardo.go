@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/go-json-experiment/json"
+	"encoding/json/v2"
 	"google.golang.org/protobuf/proto"
 	"lostluck.dev/beam-go/internal/beamopts"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"

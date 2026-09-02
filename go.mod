@@ -3,7 +3,6 @@ module lostluck.dev/beam-go
 go 1.27
 
 require (
-	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/jba/slog v0.2.0

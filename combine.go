@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/go-json-experiment/json"
+	"encoding/json/v2"
 	"google.golang.org/protobuf/proto"
 	"lostluck.dev/beam-go/coders"
 	pipepb "lostluck.dev/beam-go/internal/model/pipeline_v1"

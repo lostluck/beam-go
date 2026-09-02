@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/go-json-experiment/json"
+	"encoding/json/v2"
 	"lostluck.dev/beam-go/internal/beamopts"
 )
 

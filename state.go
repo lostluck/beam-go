@@ -10,7 +10,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/go-json-experiment/json"
+	"encoding/json/v2"
 	"lostluck.dev/beam-go/coders"
 	"lostluck.dev/beam-go/internal/harness"
 	fnpb "lostluck.dev/beam-go/internal/model/fnexecution_v1"

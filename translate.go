@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-json-experiment/json"
-	"github.com/go-json-experiment/json/jsontext"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"github.com/google/uuid"
 	"golang.org/x/exp/maps"
 	"google.golang.org/protobuf/proto"

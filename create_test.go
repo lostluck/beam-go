@@ -19,7 +19,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/go-json-experiment/json"
+	"encoding/json/v2"
 	"github.com/google/go-cmp/cmp"
 )
 

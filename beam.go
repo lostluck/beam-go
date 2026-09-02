@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-json-experiment/json"
+	"encoding/json/v2"
 	"google.golang.org/protobuf/proto"
 	"lostluck.dev/beam-go/internal/beamopts"
 	"lostluck.dev/beam-go/internal/extworker"
