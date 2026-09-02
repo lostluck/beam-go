@@ -203,3 +203,31 @@ func TestInPane_Success(t *testing.T) {
 		t.Fatalf("expected pipeline to succeed, got error: %v", err)
 	}
 }
+
+func TestEquals_EncodedByteComparison(t *testing.T) {
+	type CustomKey struct {
+		Prefix string
+		Index  int
+	}
+
+	_, err := beam.LaunchAndWait(t.Context(), func(s *beam.Scope) error {
+		imp := s.Impulse()
+		src := s.ParDo(imp, &sourceFn[CustomKey]{
+			Elements: []CustomKey{
+				{Prefix: "b", Index: 2},
+				{Prefix: "a", Index: 10},
+				{Prefix: "a", Index: 1},
+			},
+		})
+		// Provide in scrambled order to verify encoded byte sorting
+		passert.Equals(s, src.Out,
+			CustomKey{Prefix: "a", Index: 1},
+			CustomKey{Prefix: "b", Index: 2},
+			CustomKey{Prefix: "a", Index: 10},
+		)
+		return nil
+	}, pipeName(t))
+	if err != nil {
+		t.Fatalf("expected pipeline to succeed with encoded byte comparison, got: %v", err)
+	}
+}

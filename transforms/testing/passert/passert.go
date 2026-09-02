@@ -20,9 +20,9 @@
 package passert
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/google/go-cmp/cmp"
 	"lostluck.dev/beam-go"
@@ -35,21 +35,65 @@ type equalsFn[E beam.Element] struct {
 	Expected []E
 }
 
+type encodedElement[E any] struct {
+	val E
+	raw []byte
+}
+
 func (fn *equalsFn[E]) ProcessBundle(dfc *beam.DFC[[]byte]) error {
 	return dfc.Process(func(ec beam.ElmC, _ []byte) error {
-		var got []E
+		coder := fn.Side.Coder()
+		var got []encodedElement[E]
 		for v := range fn.Side.All(ec) {
-			got = append(got, v)
+			got = append(got, encodedElement[E]{
+				val: v,
+				raw: coders.Encode(coder, v),
+			})
 		}
-		want := slices.Clone(fn.Expected)
-		slices.SortFunc(got, func(a, b E) int {
-			return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+		want := make([]encodedElement[E], len(fn.Expected))
+		for i, v := range fn.Expected {
+			want[i] = encodedElement[E]{
+				val: v,
+				raw: coders.Encode(coder, v),
+			}
+		}
+		slices.SortFunc(got, func(a, b encodedElement[E]) int {
+			return bytes.Compare(a.raw, b.raw)
 		})
-		slices.SortFunc(want, func(a, b E) int {
-			return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+		slices.SortFunc(want, func(a, b encodedElement[E]) int {
+			return bytes.Compare(a.raw, b.raw)
 		})
-		if diff := cmp.Diff(want, got); diff != "" {
-			return fmt.Errorf("passert.Equals failed (-want +got):\n%s", diff)
+
+		if len(got) != len(want) {
+			gotVals := make([]E, len(got))
+			for i, g := range got {
+				gotVals[i] = g.val
+			}
+			wantVals := make([]E, len(want))
+			for i, w := range want {
+				wantVals[i] = w.val
+			}
+			return fmt.Errorf("passert.Equals failed (count mismatch: got %d, want %d):\n%s",
+				len(got), len(want), cmp.Diff(wantVals, gotVals))
+		}
+
+		for i := range got {
+			if !bytes.Equal(got[i].raw, want[i].raw) {
+				gotVals := make([]E, len(got))
+				for j, g := range got {
+					gotVals[j] = g.val
+				}
+				wantVals := make([]E, len(want))
+				for j, w := range want {
+					wantVals[j] = w.val
+				}
+				diff := cmp.Diff(wantVals, gotVals)
+				if diff == "" {
+					return fmt.Errorf("passert.Equals failed (encoded bytes mismatch at index %d: got %x, want %x)",
+						i, got[i].raw, want[i].raw)
+				}
+				return fmt.Errorf("passert.Equals failed (-want +got):\n%s", diff)
+			}
 		}
 		return nil
 	})

@@ -60,6 +60,14 @@ func (si *SideInputIter[E]) initCoder(cs map[string]*pipepb.Coder, cid string) {
 	si.coder = coderFromProto[E](cs, cid)
 }
 
+// Coder returns the element coder for this side input.
+func (si *SideInputIter[E]) Coder() coders.Coder[E] {
+	if si.coder != nil {
+		return si.coder
+	}
+	return MakeCoder[E]()
+}
+
 func (si *SideInputIter[E]) initialize(ctx context.Context, dataCon harness.DataContext, url, sideID, transformID string) {
 	si.initIterReader = func(w []byte) harness.NextBuffer {
 		key := &fnpb.StateKey{

@@ -69,9 +69,14 @@ var _ structuredCoder = KV[int, int]{}
 
 func (KV[K, V]) makeCoder(cs map[string]*pipepb.Coder, cid string) any {
 	c := cs[cid]
+	var kcid, vcid string
+	if c != nil && len(c.GetComponentCoderIds()) >= 2 {
+		kcid = c.GetComponentCoderIds()[0]
+		vcid = c.GetComponentCoderIds()[1]
+	}
 	return kvCoder[K, V]{
-		KCoder: coderFromProto[K](cs, c.GetComponentCoderIds()[0]),
-		VCoder: coderFromProto[V](cs, c.GetComponentCoderIds()[1]),
+		KCoder: coderFromProto[K](cs, kcid),
+		VCoder: coderFromProto[V](cs, vcid),
 	}
 }
 
@@ -96,8 +101,12 @@ var _ structuredCoder = Iter[int]{}
 
 func (Iter[V]) makeCoder(cs map[string]*pipepb.Coder, cid string) any {
 	c := cs[cid]
+	var vcid string
+	if c != nil && len(c.GetComponentCoderIds()) >= 1 {
+		vcid = c.GetComponentCoderIds()[0]
+	}
 	return iterCoder[V]{
-		VCoder: coderFromProto[V](cs, c.GetComponentCoderIds()[0]),
+		VCoder: coderFromProto[V](cs, vcid),
 	}
 }
 
